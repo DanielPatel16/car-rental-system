@@ -1,0 +1,84 @@
+/* Import Inter Font */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+:root {
+  /* Colors */
+  --primary: #00288e;
+  --primary-hover: #1e40af; /* primary-container */
+  --surface: #faf8ff;
+  --surface-container: #eaedff;
+  --on-surface: #131b2e;
+  --on-surface-variant: #444653;
+  --outline: #c4c5d5;
+  --success: #3fd298; /* on-tertiary-container */
+  --error: #ba1a1a;
+  
+  /* Typography */
+  --font-inter: 'Inter', sans-serif;
+  
+  /* Radii */
+  --radius-sm: 0.25rem;
+  --radius-md: 0.5rem;   /* Standard elements */
+  --radius-lg: 1rem;     /* Cards/Containers */
+  --radius-full: 9999px; /* Badges */
+  
+  /* Shadows */
+  --shadow-level-1: 0px 4px 6px -1px rgba(0, 40, 142, 0.08); /* Tinted with primary */
+  --shadow-level-2: 0px 10px 15px -3px rgba(0, 40, 142, 0.12);
+}
+
+/* Base Setup */
+body {
+  font-family: var(--font-inter);
+  background-color: var(--surface);
+  color: var(--on-surface);
+  line-height: 1.5;
+}
+
+/* Typography Classes */
+.headline-lg { font-size: 32px; font-weight: 700; line-height: 40px; letter-spacing: -0.02em; }
+.headline-md { font-size: 24px; font-weight: 600; line-height: 32px; letter-spacing: -0.01em; }
+.label-md { font-size: 14px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; }
+
+/* Buttons */
+.btn-primary {
+  background-color: var(--primary);
+  border: none;
+  border-radius: var(--radius-md);
+  padding: 12px 24px;
+  font-weight: 600;
+  transition: all 0.2s ease-in-out;
+}
+.btn-primary:hover {
+  background-color: var(--primary-hover);
+  box-shadow: var(--shadow-level-1);
+}
+
+.btn-secondary {
+  background-color: transparent;
+  border: 1px solid var(--outline);
+  color: var(--primary);
+  border-radius: var(--radius-md);
+  padding: 12px 24px;
+  font-weight: 600;
+}
+
+/* Level 1 Container (Cards / Search Box) */
+.surface-card {
+  background-color: #ffffff;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-level-1);
+  border: 1px solid var(--surface-container);
+  padding: 24px;
+}
+
+/* Inputs */
+.form-control, .form-select {
+  border-radius: var(--radius-md);
+  border: 1px solid var(--outline);
+  padding: 12px 16px;
+}
+.form-control:focus, .form-select:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(0, 40, 142, 0.2); /* 2px offset ring */
+}
