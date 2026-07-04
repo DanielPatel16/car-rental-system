@@ -148,24 +148,14 @@
 <span class="text-label-md font-label-md">Fleet</span>
 </a>
 <!-- Bookings -->
-<a class="flex items-center gap-md text-on-surface-variant dark:text-surface-variant px-md py-sm mx-sm hover:bg-surface-container-high dark:hover:bg-surface-variant transition-colors rounded-lg" href="#">
+<a class="flex items-center gap-md text-on-surface-variant dark:text-surface-variant px-md py-sm mx-sm hover:bg-surface-container-high dark:hover:bg-surface-variant transition-colors rounded-lg" href="bookings.php">
 <span class="material-symbols-outlined">calendar_today</span>
 <span class="text-label-md font-label-md">Bookings</span>
 </a>
 <!-- Customers -->
-<a class="flex items-center gap-md text-on-surface-variant dark:text-surface-variant px-md py-sm mx-sm hover:bg-surface-container-high dark:hover:bg-surface-variant transition-colors rounded-lg" href="#">
+<a class="flex items-center gap-md text-on-surface-variant dark:text-surface-variant px-md py-sm mx-sm hover:bg-surface-container-high dark:hover:bg-surface-variant transition-colors rounded-lg" href="users.php">
 <span class="material-symbols-outlined">group</span>
 <span class="text-label-md font-label-md">Customers</span>
-</a>
-<!-- Maintenance -->
-<a class="flex items-center gap-md text-on-surface-variant dark:text-surface-variant px-md py-sm mx-sm hover:bg-surface-container-high dark:hover:bg-surface-variant transition-colors rounded-lg" href="#">
-<span class="material-symbols-outlined">build</span>
-<span class="text-label-md font-label-md">Maintenance</span>
-</a>
-<!-- Settings -->
-<a class="flex items-center gap-md text-on-surface-variant dark:text-surface-variant px-md py-sm mx-sm hover:bg-surface-container-high dark:hover:bg-surface-variant transition-colors rounded-lg" href="#">
-<span class="material-symbols-outlined">settings</span>
-<span class="text-label-md font-label-md">Settings</span>
 </a>
 </nav>
 <!-- CTA & Footer Nav -->

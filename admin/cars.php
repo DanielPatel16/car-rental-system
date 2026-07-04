@@ -362,21 +362,13 @@ $totalFleet = array_sum($statCounts);
 <span class="material-symbols-outlined">directions_car</span>
                 Fleet
             </a>
-<a class="flex items-center gap-md p-md text-secondary dark:text-secondary-fixed-dim hover:bg-surface-container-high dark:hover:bg-on-secondary-fixed-variant rounded-lg transition-colors font-label-md text-label-md" href="#">
+<a class="flex items-center gap-md p-md text-secondary dark:text-secondary-fixed-dim hover:bg-surface-container-high dark:hover:bg-on-secondary-fixed-variant rounded-lg transition-colors font-label-md text-label-md" href="bookings.php">
 <span class="material-symbols-outlined">calendar_month</span>
                 Bookings
             </a>
-<a class="flex items-center gap-md p-md text-secondary dark:text-secondary-fixed-dim hover:bg-surface-container-high dark:hover:bg-on-secondary-fixed-variant rounded-lg transition-colors font-label-md text-label-md" href="#">
+<a class="flex items-center gap-md p-md text-secondary dark:text-secondary-fixed-dim hover:bg-surface-container-high dark:hover:bg-on-secondary-fixed-variant rounded-lg transition-colors font-label-md text-label-md" href="users.php">
 <span class="material-symbols-outlined">group</span>
                 Customers
-            </a>
-<a class="flex items-center gap-md p-md text-secondary dark:text-secondary-fixed-dim hover:bg-surface-container-high dark:hover:bg-on-secondary-fixed-variant rounded-lg transition-colors font-label-md text-label-md" href="#">
-<span class="material-symbols-outlined">build</span>
-                Maintenance
-            </a>
-<a class="flex items-center gap-md p-md text-secondary dark:text-secondary-fixed-dim hover:bg-surface-container-high dark:hover:bg-on-secondary-fixed-variant rounded-lg transition-colors font-label-md text-label-md" href="#">
-<span class="material-symbols-outlined">settings</span>
-                Settings
             </a>
 </nav>
 <div class="pt-md border-t border-outline-variant">
