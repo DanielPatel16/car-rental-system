@@ -1,4 +1,4 @@
-# 🚗 DriveEase - Car Rental Management System
+n# 🚗 DriveEase - Car Rental Management System
 
 DriveEase is a web-based Car Rental Management System developed using **PHP** and **MySQL**. It allows customers to browse available cars, book rentals online, manage their profiles, and view booking history. Administrators can manage vehicles, customers, bookings, payments, and reports through a dedicated dashboard.
 
@@ -292,7 +292,7 @@ This project demonstrates:
 
 # 🤝 Contributing
 
-Contributions are welcome!
+Contributions are welcome
 
 If you have ideas for improvements or find any bugs, feel free to fork the repository and submit a pull request.
 
