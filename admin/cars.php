@@ -215,10 +215,6 @@ $totalFleet = array_sum($statCounts);
 <meta charset="utf-8">
 <meta content="width=device-width, initial-scale=1.0" name="viewport">
 <title>DriveEase Admin - Fleet Management</title>
-<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
-<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
-<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
 <style>
         .material-symbols-outlined {
             font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
@@ -246,146 +242,10 @@ $totalFleet = array_sum($statCounts);
             background: #757684;
         }
     </style>
-<script id="tailwind-config">
-        tailwind.config = {
-          darkMode: "class",
-          theme: {
-            extend: {
-              "colors": {
-                      "surface-container-low": "#f2f3ff",
-                      "surface-dim": "#d2d9f4",
-                      "primary-container": "#1e40af",
-                      "on-background": "#131b2e",
-                      "on-surface-variant": "#444653",
-                      "on-primary": "#ffffff",
-                      "tertiary-fixed-dim": "#4edea3",
-                      "on-tertiary-container": "#3fd298",
-                      "secondary": "#516072",
-                      "surface-container": "#eaedff",
-                      "on-secondary-container": "#556477",
-                      "on-error": "#ffffff",
-                      "tertiary-fixed": "#6ffbbe",
-                      "surface-container-high": "#e2e7ff",
-                      "secondary-container": "#d2e1f7",
-                      "outline-variant": "#c4c5d5",
-                      "on-primary-container": "#a8b8ff",
-                      "surface-container-highest": "#dae2fd",
-                      "surface": "#faf8ff",
-                      "on-tertiary-fixed": "#002113",
-                      "surface-tint": "#3755c3",
-                      "on-primary-fixed-variant": "#173bab",
-                      "on-tertiary": "#ffffff",
-                      "primary-fixed-dim": "#b8c4ff",
-                      "on-surface": "#131b2e",
-                      "primary": "#00288e",
-                      "secondary-fixed": "#d4e4fa",
-                      "on-error-container": "#93000a",
-                      "primary-fixed": "#dde1ff",
-                      "on-primary-fixed": "#001453",
-                      "secondary-fixed-dim": "#b9c8de",
-                      "on-secondary-fixed": "#0d1c2d",
-                      "error-container": "#ffdad6",
-                      "on-tertiary-fixed-variant": "#005236",
-                      "surface-container-lowest": "#ffffff",
-                      "inverse-on-surface": "#eef0ff",
-                      "inverse-surface": "#283044",
-                      "inverse-primary": "#b8c4ff",
-                      "tertiary": "#003d27",
-                      "surface-variant": "#dae2fd",
-                      "error": "#ba1a1a",
-                      "background": "#faf8ff",
-                      "tertiary-container": "#00563a",
-                      "on-secondary": "#ffffff",
-                      "surface-bright": "#faf8ff",
-                      "on-secondary-fixed-variant": "#39485a",
-                      "outline": "#757684"
-              },
-              "borderRadius": {
-                      "DEFAULT": "0.25rem",
-                      "lg": "0.5rem",
-                      "xl": "0.75rem",
-                      "full": "9999px"
-              },
-              "spacing": {
-                      "margin-desktop": "32px",
-                      "lg": "24px",
-                      "gutter": "24px",
-                      "max-width": "1440px",
-                      "xl": "32px",
-                      "sm": "8px",
-                      "md": "16px",
-                      "margin-mobile": "16px",
-                      "xs": "4px",
-                      "base": "4px",
-                      "2xl": "48px"
-              },
-              "fontFamily": {
-                      "label-sm": ["Inter"],
-                      "body-sm": ["Inter"],
-                      "label-md": ["Inter"],
-                      "body-lg": ["Inter"],
-                      "body-md": ["Inter"],
-                      "headline-sm": ["Inter"],
-                      "headline-md": ["Inter"],
-                      "headline-lg-mobile": ["Inter"],
-                      "headline-lg": ["Inter"]
-              },
-              "fontSize": {
-                      "label-sm": ["12px", {"lineHeight": "16px", "fontWeight": "500"}],
-                      "body-sm": ["14px", {"lineHeight": "20px", "fontWeight": "400"}],
-                      "label-md": ["14px", {"lineHeight": "16px", "letterSpacing": "0.05em", "fontWeight": "600"}],
-                      "body-lg": ["18px", {"lineHeight": "28px", "fontWeight": "400"}],
-                      "body-md": ["16px", {"lineHeight": "24px", "fontWeight": "400"}],
-                      "headline-sm": ["20px", {"lineHeight": "28px", "fontWeight": "600"}],
-                      "headline-md": ["24px", {"lineHeight": "32px", "letterSpacing": "-0.01em", "fontWeight": "600"}],
-                      "headline-lg-mobile": ["24px", {"lineHeight": "32px", "letterSpacing": "-0.01em", "fontWeight": "700"}],
-                      "headline-lg": ["32px", {"lineHeight": "40px", "letterSpacing": "-0.02em", "fontWeight": "700"}]
-              }
-            },
-          },
-        }
-      </script>
 </head>
 <body class="bg-surface text-on-surface">
 <!-- SideNavBar -->
-<aside class="h-screen w-64 fixed left-0 top-0 bg-surface-container-lowest dark:bg-on-background border-r border-outline-variant dark:border-outline shadow-sm dark:shadow-none flex flex-col h-full p-md space-y-sm z-30">
-<div class="mb-xl px-sm">
-<h1 class="font-headline-md text-headline-md font-bold text-primary dark:text-primary-fixed">DriveEase Admin</h1>
-<p class="text-secondary font-label-sm text-label-sm">Fleet Management</p>
-</div>
-<nav class="flex-1 space-y-xs">
-<a class="flex items-center gap-md p-md text-secondary dark:text-secondary-fixed-dim hover:bg-surface-container-high dark:hover:bg-on-secondary-fixed-variant rounded-lg transition-colors font-label-md text-label-md" href="dashboard.php">
-<span class="material-symbols-outlined">dashboard</span>
-                Dashboard
-            </a>
-<a class="flex items-center gap-md p-md text-primary dark:text-primary-fixed-dim font-bold bg-secondary-container dark:bg-primary-container rounded-lg transition-colors font-label-md text-label-md" href="cars.php">
-<span class="material-symbols-outlined">directions_car</span>
-                Fleet
-            </a>
-<a class="flex items-center gap-md p-md text-secondary dark:text-secondary-fixed-dim hover:bg-surface-container-high dark:hover:bg-on-secondary-fixed-variant rounded-lg transition-colors font-label-md text-label-md" href="#">
-<span class="material-symbols-outlined">calendar_month</span>
-                Bookings
-            </a>
-<a class="flex items-center gap-md p-md text-secondary dark:text-secondary-fixed-dim hover:bg-surface-container-high dark:hover:bg-on-secondary-fixed-variant rounded-lg transition-colors font-label-md text-label-md" href="#">
-<span class="material-symbols-outlined">group</span>
-                Customers
-            </a>
-<a class="flex items-center gap-md p-md text-secondary dark:text-secondary-fixed-dim hover:bg-surface-container-high dark:hover:bg-on-secondary-fixed-variant rounded-lg transition-colors font-label-md text-label-md" href="#">
-<span class="material-symbols-outlined">build</span>
-                Maintenance
-            </a>
-<a class="flex items-center gap-md p-md text-secondary dark:text-secondary-fixed-dim hover:bg-surface-container-high dark:hover:bg-on-secondary-fixed-variant rounded-lg transition-colors font-label-md text-label-md" href="#">
-<span class="material-symbols-outlined">settings</span>
-                Settings
-            </a>
-</nav>
-<div class="pt-md border-t border-outline-variant">
-<a href="../logout.php" class="w-full flex items-center justify-center gap-sm bg-primary text-on-primary font-label-md text-label-md py-md px-lg rounded-lg hover:opacity-90 transition-all active:scale-95">
-<span class="material-symbols-outlined">logout</span>
-                Logout
-            </a>
-</div>
-</aside>
+<?php include "sidebar.php"; ?>
 <!-- TopNavBar -->
 <header class="fixed top-0 right-0 w-[calc(100%-16rem)] h-16 bg-surface dark:bg-on-background border-b border-outline-variant dark:border-outline flex justify-between items-center px-xl w-full z-20">
 <div class="flex items-center justify-center gap-xl flex-1">
