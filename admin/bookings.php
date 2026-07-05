@@ -1,110 +1,7 @@
 <!DOCTYPE html><html class="light" lang="en"><head>
 <meta charset="utf-8">
 <meta content="width=device-width, initial-scale=1.0" name="viewport">
-<title>DriveEase Admin - Bookings Management</title>
-<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&amp;display=swap" rel="stylesheet">
-<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
-<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet">
-<script id="tailwind-config">
-      tailwind.config = {
-        darkMode: "class",
-        theme: {
-          extend: {
-            "colors": {
-                    "surface-container-low": "#f2f3ff",
-                    "surface-dim": "#d2d9f4",
-                    "primary-container": "#1e40af",
-                    "on-background": "#131b2e",
-                    "on-surface-variant": "#444653",
-                    "on-primary": "#ffffff",
-                    "tertiary-fixed-dim": "#4edea3",
-                    "on-tertiary-container": "#3fd298",
-                    "secondary": "#516072",
-                    "surface-container": "#eaedff",
-                    "on-secondary-container": "#556477",
-                    "on-error": "#ffffff",
-                    "tertiary-fixed": "#6ffbbe",
-                    "surface-container-high": "#e2e7ff",
-                    "secondary-container": "#d2e1f7",
-                    "outline-variant": "#c4c5d5",
-                    "on-primary-container": "#a8b8ff",
-                    "surface-container-highest": "#dae2fd",
-                    "surface": "#faf8ff",
-                    "on-tertiary-fixed": "#002113",
-                    "surface-tint": "#3755c3",
-                    "on-primary-fixed-variant": "#173bab",
-                    "on-tertiary": "#ffffff",
-                    "primary-fixed-dim": "#b8c4ff",
-                    "on-surface": "#131b2e",
-                    "primary": "#00288e",
-                    "secondary-fixed": "#d4e4fa",
-                    "on-error-container": "#93000a",
-                    "primary-fixed": "#dde1ff",
-                    "on-primary-fixed": "#001453",
-                    "secondary-fixed-dim": "#b9c8de",
-                    "on-secondary-fixed": "#0d1c2d",
-                    "error-container": "#ffdad6",
-                    "on-tertiary-fixed-variant": "#005236",
-                    "surface-container-lowest": "#ffffff",
-                    "inverse-on-surface": "#eef0ff",
-                    "inverse-surface": "#283044",
-                    "inverse-primary": "#b8c4ff",
-                    "tertiary": "#003d27",
-                    "surface-variant": "#dae2fd",
-                    "error": "#ba1a1a",
-                    "background": "#faf8ff",
-                    "tertiary-container": "#00563a",
-                    "on-secondary": "#ffffff",
-                    "surface-bright": "#faf8ff",
-                    "on-secondary-fixed-variant": "#39485a",
-                    "outline": "#757684"
-            },
-            "borderRadius": {
-                    "DEFAULT": "0.25rem",
-                    "lg": "0.5rem",
-                    "xl": "0.75rem",
-                    "full": "9999px"
-            },
-            "spacing": {
-                    "margin-desktop": "32px",
-                    "lg": "24px",
-                    "gutter": "24px",
-                    "max-width": "1440px",
-                    "xl": "32px",
-                    "sm": "8px",
-                    "md": "16px",
-                    "margin-mobile": "16px",
-                    "xs": "4px",
-                    "base": "4px",
-                    "2xl": "48px"
-            },
-            "fontFamily": {
-                    "label-sm": ["Inter"],
-                    "body-sm": ["Inter"],
-                    "label-md": ["Inter"],
-                    "body-lg": ["Inter"],
-                    "body-md": ["Inter"],
-                    "headline-sm": ["Inter"],
-                    "headline-md": ["Inter"],
-                    "headline-lg-mobile": ["Inter"],
-                    "headline-lg": ["Inter"]
-            },
-            "fontSize": {
-                    "label-sm": ["12px", {"lineHeight": "16px", "fontWeight": "500"}],
-                    "body-sm": ["14px", {"lineHeight": "20px", "fontWeight": "400"}],
-                    "label-md": ["14px", {"lineHeight": "16px", "letterSpacing": "0.05em", "fontWeight": "600"}],
-                    "body-lg": ["18px", {"lineHeight": "28px", "fontWeight": "400"}],
-                    "body-md": ["16px", {"lineHeight": "24px", "fontWeight": "400"}],
-                    "headline-sm": ["20px", {"lineHeight": "28px", "fontWeight": "600"}],
-                    "headline-md": ["24px", {"lineHeight": "32px", "letterSpacing": "-0.01em", "fontWeight": "600"}],
-                    "headline-lg-mobile": ["24px", {"lineHeight": "32px", "letterSpacing": "-0.01em", "fontWeight": "700"}],
-                    "headline-lg": ["32px", {"lineHeight": "40px", "letterSpacing": "-0.02em", "fontWeight": "700"}]
-            }
-          },
-        },
-      }
-    </script>
+<title>DriveEase Admin - Bookings Management</title>          
 <style>
         .material-symbols-outlined {
             font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
@@ -122,39 +19,7 @@
 </head>
 <body class="bg-background text-on-surface min-h-screen">
 <!-- SideNavBar Anchor -->
-<aside class="h-screen w-64 fixed left-0 top-0 bg-surface-container-lowest dark:bg-on-background border-r border-outline-variant dark:border-outline shadow-sm dark:shadow-none z-50">
-<div class="flex flex-col h-full p-md space-y-sm">
-<div class="py-md px-sm">
-<h1 class="font-headline-md text-headline-md font-bold text-primary dark:text-primary-fixed">DriveEase Admin</h1>
-<p class="font-label-sm text-label-sm text-secondary">Fleet Management</p>
-</div>
-<nav class="flex-grow space-y-xs pt-md">
-<a class="flex items-center gap-md px-md py-sm text-secondary dark:text-secondary-fixed-dim hover:bg-surface-container-high dark:hover:bg-on-secondary-fixed-variant rounded-lg transition-colors group" href="dashboard.php">
-<span class="material-symbols-outlined" data-icon="dashboard">dashboard</span>
-<span class="font-label-md text-label-md">Dashboard</span>
-</a>
-<a class="flex items-center gap-md px-md py-sm text-secondary dark:text-secondary-fixed-dim hover:bg-surface-container-high dark:hover:bg-on-secondary-fixed-variant rounded-lg transition-colors group" href="cars.php">
-<span class="material-symbols-outlined" data-icon="directions_car">directions_car</span>
-<span class="font-label-md text-label-md">Fleet</span>
-</a>
-<!-- ACTIVE TAB: Bookings -->
-<a class="flex items-center gap-md px-md py-sm text-primary dark:text-primary-fixed-dim font-bold bg-secondary-container dark:bg-primary-container rounded-lg transition-all duration-200" href="bookings.php">
-<span class="material-symbols-outlined" data-icon="calendar_month">calendar_month</span>
-<span class="font-label-md text-label-md">Bookings</span>
-</a>
-<a class="flex items-center gap-md px-md py-sm text-secondary dark:text-secondary-fixed-dim hover:bg-surface-container-high dark:hover:bg-on-secondary-fixed-variant rounded-lg transition-colors group" href="users.php">
-<span class="material-symbols-outlined" data-icon="group">group</span>
-<span class="font-label-md text-label-md">Customers</span>
-</a>
-</nav>
-<div class="mt-auto pt-md border-t border-outline-variant">
-<button class="w-full bg-primary text-on-primary py-sm rounded-lg font-label-md text-label-md hover:opacity-90 transition-all flex items-center justify-center gap-sm">
-<span class="material-symbols-outlined" data-icon="add">add</span>
-                    New Booking
-                </button>
-</div>
-</div>
-</aside>
+<?php include "sidebar.php"; ?>
 <!-- TopNavBar Anchor -->
 <header class="fixed top-0 right-0 w-[calc(100%-16rem)] h-16 bg-surface dark:bg-on-background border-b border-outline-variant dark:border-outline z-40">
 <div class="flex justify-between items-center px-xl h-full w-full">

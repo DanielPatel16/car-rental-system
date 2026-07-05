@@ -12,8 +12,8 @@ $nav_items = [
     ['label' => 'Bookings',    'icon' => 'calendar_today', 'href' => 'bookings.php'],
     ['label' => 'Customers',   'icon' => 'group',          'href' => 'users.php'],
     ['label' => 'Reports',     'icon' => 'insights',       'href' => 'reports.php'],
-    ['label' => 'Maintenance', 'icon' => 'build',          'href' => '#'],
-    ['label' => 'Settings',    'icon' => 'settings',       'href' => '#'],
+    // ['label' => 'Maintenance', 'icon' => 'build',          'href' => '#'],
+    // ['label' => 'Settings',    'icon' => 'settings',       'href' => '#'],
 ];
 ?>
 <!-- Google Fonts -->
