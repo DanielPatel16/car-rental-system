@@ -1,3 +1,6 @@
+<?php
+session_start();
+?>
 <!DOCTYPE html>
 <html lang="en" class="scroll-smooth">
 <head>
@@ -145,10 +148,29 @@
             </div>
 
             <div class="flex items-center gap-md">
+                <?php if (isset($_SESSION['user_id'])): ?>
                 <button class="material-symbols-outlined text-primary p-xs hover:bg-surface-container-high rounded-full transition-colors">notifications</button>
-                <div class="w-8 h-8 rounded-full overflow-hidden border border-outline-variant">
-                    <img class="w-full h-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDSp_pP4RqWjO23JNAuHvbCrwg8U6h0Mox0kMLpmwuHyJVLOjvG2-_IA2ONo9DVugKUOlTF-IvRvhItfu_nWTU1H020e7TewvTZY5azSw3TYCdxvBBGXG0gxg9FPFBbnMHuVQgnsBR-NmytHJ6OdvLG0ns7EpjdpSI_BKAIhtVjZXGuDlkIHh6pmaxwce2jzjgf-a4pob2M-sM_Z5RXoc_Zh42kPtVodMEhbJ3QxiPNatc49cRLHQeqpGUpR8p-6jUz7PgtRP9KMWw" alt="Profile">
+                <div class="relative group">
+                    <button class="flex items-center gap-sm cursor-pointer">
+                        <div class="w-8 h-8 rounded-full overflow-hidden border border-outline-variant">
+                            <img class="w-full h-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDSp_pP4RqWjO23JNAuHvbCrwg8U6h0Mox0kMLpmwuHyJVLOjvG2-_IA2ONo9DVugKUOlTF-IvRvhItfu_nWTU1H020e7TewvTZY5azSw3TYCdxvBBGXG0gxg9FPFBbnMHuVQgnsBR-NmytHJ6OdvLG0ns7EpjdpSI_BKAIhtVjZXGuDlkIHh6pmaxwce2jzjgf-a4pob2M-sM_Z5RXoc_Zh42kPtVodMEhbJ3QxiPNatc49cRLHQeqpGUpR8p-6jUz7PgtRP9KMWw" alt="Profile">
+                        </div>
+                        <span class="hidden lg:inline text-label-md font-label-md text-on-surface"><?php echo htmlspecialchars($_SESSION['user_name'] ?? 'Account'); ?></span>
+                        <span class="material-symbols-outlined text-on-surface-variant text-[18px]">expand_more</span>
+                    </button>
+                    <div class="absolute right-0 mt-2 w-44 bg-surface border border-outline-variant rounded-lg shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-150 z-50">
+                        <?php if (($_SESSION['role'] ?? '') === 'admin'): ?>
+                        <a href="admin/dashboard.php" class="block px-md py-sm text-body-sm text-on-surface-variant hover:bg-surface-container-high hover:text-primary transition-colors">Admin Dashboard</a>
+                        <?php else: ?>
+                        <a href="customer/profile.php" class="block px-md py-sm text-body-sm text-on-surface-variant hover:bg-surface-container-high hover:text-primary transition-colors">My Profile</a>
+                        <?php endif; ?>
+                        <a href="logout.php" class="block px-md py-sm text-body-sm text-error hover:bg-error-container transition-colors">Logout</a>
+                    </div>
                 </div>
+                <?php else: ?>
+                <a href="login.php" class="text-on-surface-variant hover:text-primary transition-colors duration-200 text-label-md font-label-md px-md py-xs">Login</a>
+                <a href="register.php" class="bg-primary text-on-primary px-lg py-xs rounded-lg font-label-md text-label-md hover:bg-primary-container transition-colors duration-200">Register</a>
+                <?php endif; ?>
             </div>
         </nav>
     </header>
