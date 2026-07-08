@@ -1,3 +1,113 @@
+<?php
+session_start();
+include "../includes/db.php";
+
+// ---- Auth guard: only logged-in admins may access this page ----
+if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
+    header("Location: ../login.php");
+    exit();
+}
+
+// ---------------------------------------------------------------
+// Handle status actions (?action=confirm|cancel|complete&id=X)
+// ---------------------------------------------------------------
+if (isset($_GET['action'], $_GET['id'])) {
+    $id = (int) $_GET['id'];
+    $map = ['confirm' => 'Confirmed', 'cancel' => 'Cancelled', 'complete' => 'Completed'];
+
+    if (isset($map[$_GET['action']])) {
+        $newStatus = $map[$_GET['action']];
+        $stmt = $conn->prepare("UPDATE bookings SET booking_status = ? WHERE id = ?");
+        $stmt->bind_param("si", $newStatus, $id);
+        $stmt->execute();
+        $stmt->close();
+
+        if ($newStatus === 'Cancelled') {
+            $conn->query("UPDATE bookings SET payment_status = 'Refunded' WHERE id = $id AND payment_status = 'Paid'");
+        }
+    }
+
+    $qs = $_GET;
+    unset($qs['action'], $qs['id']);
+    header("Location: bookings.php?" . http_build_query($qs));
+    exit();
+}
+
+// ---------------------------------------------------------------
+// Filters + pagination
+// ---------------------------------------------------------------
+$filterStatus = $_GET['status'] ?? 'All Bookings';
+$search       = trim($_GET['q'] ?? '');
+
+$where  = [];
+$params = [];
+$types  = "";
+
+if ($filterStatus !== '' && $filterStatus !== 'All Bookings') {
+    $where[]  = "bookings.booking_status = ?";
+    $params[] = $filterStatus;
+    $types   .= "s";
+}
+if ($search !== '') {
+    $like = "%$search%";
+    $where[]  = "(users.user_name LIKE ? OR users.email LIKE ? OR cars.brand LIKE ? OR cars.model LIKE ?)";
+    array_push($params, $like, $like, $like, $like);
+    $types   .= "ssss";
+}
+
+$whereSql = $where ? "WHERE " . implode(" AND ", $where) : "";
+
+$perPage = 8;
+$page    = max(1, (int) ($_GET['page'] ?? 1));
+$offset  = ($page - 1) * $perPage;
+
+$baseFrom = "FROM bookings
+             JOIN users ON bookings.user_id = users.id
+             JOIN cars  ON bookings.car_id  = cars.id
+             $whereSql";
+
+$countStmt = $conn->prepare("SELECT COUNT(*) AS total $baseFrom");
+if ($types) $countStmt->bind_param($types, ...$params);
+$countStmt->execute();
+$totalRows  = (int) $countStmt->get_result()->fetch_assoc()['total'];
+$totalPages = max(1, (int) ceil($totalRows / $perPage));
+$countStmt->close();
+
+$sql = "SELECT bookings.*, users.user_name, users.email,
+               cars.brand, cars.model, cars.image
+        $baseFrom
+        ORDER BY bookings.created_at DESC
+        LIMIT ? OFFSET ?";
+$stmt = $conn->prepare($sql);
+$allTypes  = $types . "ii";
+$allParams = array_merge($params, [$perPage, $offset]);
+$stmt->bind_param($allTypes, ...$allParams);
+$stmt->execute();
+$bookings = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+$stmt->close();
+
+// ---------------------------------------------------------------
+// Stat cards
+// ---------------------------------------------------------------
+$totalBookings = (int) $conn->query("SELECT COUNT(*) c FROM bookings")->fetch_assoc()['c'];
+$activeRentals = (int) $conn->query("SELECT COUNT(*) c FROM bookings WHERE booking_status = 'Confirmed' AND CURDATE() BETWEEN pickup_date AND return_date")->fetch_assoc()['c'];
+$pendingCount  = (int) $conn->query("SELECT COUNT(*) c FROM bookings WHERE booking_status = 'Pending'")->fetch_assoc()['c'];
+$revenueMTD    = (float) ($conn->query("SELECT COALESCE(SUM(total_amount),0) r FROM bookings WHERE payment_status = 'Paid' AND MONTH(created_at) = MONTH(CURDATE()) AND YEAR(created_at) = YEAR(CURDATE())")->fetch_assoc()['r'] ?? 0);
+
+$statusBadge = [
+    'Confirmed' => 'bg-tertiary-container/10 text-tertiary-container border border-tertiary-container/20',
+    'Completed' => 'bg-surface-container-highest text-secondary border border-outline-variant',
+    'Pending'   => 'bg-error-container/10 text-error border border-error-container/20',
+    'Cancelled' => 'bg-surface-container-high text-secondary border border-outline-variant opacity-70 line-through',
+];
+
+function bqs($extra) {
+    $qs = $_GET;
+    unset($qs['action'], $qs['id']);
+    foreach ($extra as $k => $v) { $qs[$k] = $v; }
+    return 'bookings.php?' . http_build_query($qs);
+}
+?>
 <!DOCTYPE html><html class="light" lang="en"><head>
 <meta charset="utf-8">
 <meta content="width=device-width, initial-scale=1.0" name="viewport">
@@ -18,16 +128,15 @@
     </style>
 </head>
 <body class="bg-background text-on-surface min-h-screen">
-<!-- SideNavBar Anchor -->
 <?php include "sidebar.php"; ?>
-<!-- TopNavBar Anchor -->
 <header class="fixed top-0 right-0 w-[calc(100%-16rem)] h-16 bg-surface dark:bg-on-background border-b border-outline-variant dark:border-outline z-40">
 <div class="flex justify-between items-center px-xl h-full w-full">
 <div class="flex items-center gap-md w-1/3">
-<div class="relative w-full max-w-md">
+<form method="GET" class="relative w-full max-w-md">
 <span class="material-symbols-outlined absolute left-md top-1/2 -translate-y-1/2 text-secondary" data-icon="search">search</span>
-<input class="w-full pl-10 pr-md py-xs bg-surface-container-low border border-outline-variant rounded-lg focus:outline-none focus:border-primary font-body-sm text-body-sm" placeholder="Search bookings, customers, or VIN..." type="text">
-</div>
+<input class="w-full pl-10 pr-md py-xs bg-surface-container-low border border-outline-variant rounded-lg focus:outline-none focus:border-primary font-body-sm text-body-sm" placeholder="Search bookings, customers, or vehicle..." type="text" name="q" value="<?php echo htmlspecialchars($search); ?>">
+<input type="hidden" name="status" value="<?php echo htmlspecialchars($filterStatus); ?>">
+</form>
 </div>
 <div class="flex items-center gap-lg">
 <button class="relative text-secondary hover:text-primary transition-colors">
@@ -39,86 +148,62 @@
 </button>
 <div class="flex items-center gap-sm pl-md border-l border-outline-variant">
 <div class="text-right">
-<p class="font-label-md text-label-md text-on-surface">Alex Manager</p>
+<p class="font-label-md text-label-md text-on-surface"><?php echo htmlspecialchars($_SESSION['user_name'] ?? 'Admin'); ?></p>
 <p class="font-label-sm text-label-sm text-secondary">Admin Access</p>
 </div>
-<img class="w-10 h-10 rounded-full border border-primary object-cover" data-alt="A professional headshot of a corporate fleet manager in a clean, modern office setting. The lighting is bright and professional, following a light-mode aesthetic with soft blues and whites. The individual is wearing professional attire and looking confidently toward the camera." src="https://lh3.googleusercontent.com/aida-public/AB6AXuBeoe_DdMdzOnWC20h3U8FPDUKfQHCIQP_dyioEThtyuVHd1sOv6tPaUf6yuodwJy_hQE43PEE_C2u4whjt65-F3aNf8wmYVLeBbDbdoRumRJsBW0eMxt-w1melyuiDQJdag_o_8UjgbCvKwpMGIo_f2yzf1CaEOAWeMt8Pv2vkKCTk3EP6dbFGQXlaCFE95RqzSIk0AWScNL8gdkLaOOw-SHabO6AQ5k1FE4A_5OR53CQOjAP-jiOgMCPTggQFYlr9SZOCcdhsj0s">
+<img class="w-10 h-10 rounded-full border border-primary object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBeoe_DdMdzOnWC20h3U8FPDUKfQHCIQP_dyioEThtyuVHd1sOv6tPaUf6yuodwJy_hQE43PEE_C2u4whjt65-F3aNf8wmYVLeBbDbdoRumRJsBW0eMxt-w1melyuiDQJdag_o_8UjgbCvKwpMGIo_f2yzf1CaEOAWeMt8Pv2vkKCTk3EP6dbFGQXlaCFE95RqzSIk0AWScNL8gdkLaOOw-SHabO6AQ5k1FE4A_5OR53CQOjAP-jiOgMCPTggQFYlr9SZOCcdhsj0s">
 </div>
 </div>
 </div>
 </header>
-<!-- Main Content Canvas -->
 <main class="ml-64 pt-16 p-xl">
 <div class="max-w-[1440px] mx-auto">
-<!-- Header Section -->
 <div class="flex justify-between items-end mb-xl">
 <div>
 <h2 class="font-headline-lg text-headline-lg text-on-surface">Bookings Management</h2>
 <p class="font-body-md text-body-md text-secondary mt-xs">Monitor and manage all active, pending, and historical rental transactions.</p>
 </div>
-<div class="flex gap-md">
-<button class="flex items-center gap-sm px-md py-sm bg-surface-container-lowest border border-outline-variant rounded-lg font-label-md text-label-md text-secondary hover:bg-surface-container transition-colors">
-<span class="material-symbols-outlined" data-icon="download">download</span>
-                        Export CSV
-                    </button>
-<button class="flex items-center gap-sm px-md py-sm bg-primary text-on-primary rounded-lg font-label-md text-label-md hover:opacity-90 transition-all shadow-sm">
-<span class="material-symbols-outlined" data-icon="add">add</span>
-                        Create Manual Booking
-                    </button>
 </div>
-</div>
-<!-- Bento Grid Stats (Contextual) -->
+
 <div class="grid grid-cols-4 gap-lg mb-xl">
 <div class="glass-panel p-lg rounded-xl">
 <p class="font-label-sm text-label-sm text-secondary uppercase tracking-wider">Total Bookings</p>
 <div class="flex items-baseline gap-sm mt-xs">
-<h3 class="font-headline-md text-headline-md text-primary">1,284</h3>
-<span class="font-label-sm text-label-sm text-tertiary-container flex items-center"><span class="material-symbols-outlined text-[16px]" data-icon="trending_up">trending_up</span> 12%</span>
+<h3 class="font-headline-md text-headline-md text-primary"><?php echo number_format($totalBookings); ?></h3>
 </div>
 </div>
 <div class="glass-panel p-lg rounded-xl">
 <p class="font-label-sm text-label-sm text-secondary uppercase tracking-wider">Active Rentals</p>
 <div class="flex items-baseline gap-sm mt-xs">
-<h3 class="font-headline-md text-headline-md text-primary">84</h3>
+<h3 class="font-headline-md text-headline-md text-primary"><?php echo number_format($activeRentals); ?></h3>
 <span class="font-label-sm text-label-sm text-secondary">Currently on road</span>
 </div>
 </div>
 <div class="glass-panel p-lg rounded-xl">
 <p class="font-label-sm text-label-sm text-secondary uppercase tracking-wider">Pending Approvals</p>
 <div class="flex items-baseline gap-sm mt-xs">
-<h3 class="font-headline-md text-headline-md text-error">12</h3>
+<h3 class="font-headline-md text-headline-md text-error"><?php echo number_format($pendingCount); ?></h3>
 <span class="font-label-sm text-label-sm text-error">Requires action</span>
 </div>
 </div>
 <div class="glass-panel p-lg rounded-xl">
 <p class="font-label-sm text-label-sm text-secondary uppercase tracking-wider">Revenue (MTD)</p>
 <div class="flex items-baseline gap-sm mt-xs">
-<h3 class="font-headline-md text-headline-md text-primary">₹42,500</h3>
-<span class="font-label-sm text-label-sm text-tertiary-container flex items-center"><span class="material-symbols-outlined text-[16px]" data-icon="trending_up">trending_up</span> 8.4%</span>
+<h3 class="font-headline-md text-headline-md text-primary">₹<?php echo number_format($revenueMTD, 0); ?></h3>
 </div>
 </div>
 </div>
-<!-- Main Table Container -->
+
 <div class="bg-surface-container-lowest rounded-xl border border-outline-variant overflow-hidden shadow-sm">
-<!-- Filters & Controls -->
 <div class="p-lg border-b border-outline-variant flex flex-wrap items-center justify-between gap-md bg-surface-bright">
 <div class="flex items-center gap-md">
-<button class="px-md py-sm rounded-full bg-primary-fixed text-on-primary-fixed font-label-md text-label-md">All Bookings</button>
-<button class="px-md py-sm rounded-full hover:bg-surface-container-high font-label-md text-label-md text-secondary transition-colors">Pending</button>
-<button class="px-md py-sm rounded-full hover:bg-surface-container-high font-label-md text-label-md text-secondary transition-colors">Confirmed</button>
-<button class="px-md py-sm rounded-full hover:bg-surface-container-high font-label-md text-label-md text-secondary transition-colors">Completed</button>
-<button class="px-md py-sm rounded-full hover:bg-surface-container-high font-label-md text-label-md text-secondary transition-colors">Cancelled</button>
-</div>
-<div class="flex items-center gap-sm">
-<span class="font-body-sm text-body-sm text-secondary">Sort by:</span>
-<select class="bg-transparent border-none font-label-md text-label-md text-on-surface focus:ring-0 cursor-pointer">
-<option>Latest Created</option>
-<option>Pick-up Date</option>
-<option>Amount (High-Low)</option>
-</select>
+<?php foreach (['All Bookings', 'Pending', 'Confirmed', 'Completed', 'Cancelled'] as $s):
+    $active = $filterStatus === $s;
+?>
+<a href="<?php echo bqs(['status' => $s, 'page' => 1]); ?>" class="px-md py-sm rounded-full font-label-md text-label-md transition-colors <?php echo $active ? 'bg-primary-fixed text-on-primary-fixed' : 'text-secondary hover:bg-surface-container-high'; ?>"><?php echo $s; ?></a>
+<?php endforeach; ?>
 </div>
 </div>
-<!-- Table Content -->
 <div class="overflow-x-auto">
 <table class="w-full text-left border-collapse">
 <thead>
@@ -128,20 +213,29 @@
 <th class="px-lg py-md font-label-md text-label-md uppercase tracking-wider">Vehicle</th>
 <th class="px-lg py-md font-label-md text-label-md uppercase tracking-wider">Dates</th>
 <th class="px-lg py-md font-label-md text-label-md uppercase tracking-wider">Total Amount</th>
+<th class="px-lg py-md font-label-md text-label-md uppercase tracking-wider">Identity</th>
 <th class="px-lg py-md font-label-md text-label-md uppercase tracking-wider">Status</th>
 <th class="px-lg py-md font-label-md text-label-md uppercase tracking-wider">Action</th>
 </tr>
 </thead>
 <tbody class="divide-y divide-outline-variant">
-<!-- Row 1 -->
-<tr class="booking-row transition-colors cursor-pointer">
-<td class="px-lg py-lg font-label-md text-label-md text-primary">#BK-9482</td>
+<?php if (empty($bookings)): ?>
+<tr><td colspan="8" class="px-lg py-2xl text-center text-secondary font-body-md text-body-md">No bookings found.</td></tr>
+<?php endif; ?>
+<?php foreach ($bookings as $b):
+    $initials = strtoupper(substr($b['user_name'], 0, 1) . substr(strrchr($b['user_name'], ' ') ?: '', 1, 1));
+    $badgeClass = $statusBadge[$b['booking_status']] ?? 'bg-surface-container-high text-secondary border border-outline-variant';
+    $days = (int) $b['total_days'];
+    $idProofSrc = $b['id_proof_image'] ? "../uploads/documents/" . htmlspecialchars($b['id_proof_image']) : "";
+?>
+<tr class="booking-row transition-colors">
+<td class="px-lg py-lg font-label-md text-label-md text-primary">#BK-<?php echo str_pad($b['id'], 4, '0', STR_PAD_LEFT); ?></td>
 <td class="px-lg py-lg">
 <div class="flex items-center gap-md">
-<div class="w-8 h-8 rounded-full bg-secondary-container flex items-center justify-center text-primary font-bold text-xs">JS</div>
+<div class="w-8 h-8 rounded-full bg-secondary-container flex items-center justify-center text-primary font-bold text-xs"><?php echo htmlspecialchars($initials); ?></div>
 <div>
-<p class="font-label-md text-label-md">John Schmidt</p>
-<p class="font-body-sm text-body-sm text-secondary">john.s@example.com</p>
+<p class="font-label-md text-label-md"><?php echo htmlspecialchars($b['user_name']); ?></p>
+<p class="font-body-sm text-body-sm text-secondary"><?php echo htmlspecialchars($b['email']); ?></p>
 </div>
 </div>
 </td>
@@ -149,203 +243,106 @@
 <div class="flex items-center gap-sm">
 <span class="material-symbols-outlined text-secondary" data-icon="directions_car">directions_car</span>
 <div>
-<p class="font-label-md text-label-md">Tesla Model 3</p>
-<p class="font-body-sm text-body-sm text-secondary">Blue • 2023</p>
+<p class="font-label-md text-label-md"><?php echo htmlspecialchars($b['brand'] . ' ' . $b['model']); ?></p>
 </div>
 </div>
 </td>
 <td class="px-lg py-lg">
-<p class="font-label-sm text-label-sm">Oct 12 - Oct 15</p>
-<p class="font-body-sm text-body-sm text-secondary">3 Days</p>
+<p class="font-label-sm text-label-sm"><?php echo date('M d', strtotime($b['pickup_date'])); ?> - <?php echo date('M d', strtotime($b['return_date'])); ?></p>
+<p class="font-body-sm text-body-sm text-secondary"><?php echo $days; ?> Day<?php echo $days === 1 ? '' : 's'; ?></p>
 </td>
-<td class="px-lg py-lg font-label-md text-label-md">₹450.00</td>
+<td class="px-lg py-lg font-label-md text-label-md">₹<?php echo number_format($b['total_amount'], 2); ?></td>
 <td class="px-lg py-lg">
-<span class="px-sm py-xs rounded-full bg-tertiary-container/10 text-tertiary-container font-label-sm text-label-sm border border-tertiary-container/20">Confirmed</span>
+<button type="button" onclick='openIdModal(<?php echo json_encode([
+    "name" => $b['user_name'],
+    "aadhar" => $b['aadhar_number'],
+    "license" => $b['license_number'],
+    "image" => $idProofSrc,
+], JSON_HEX_APOS | JSON_HEX_QUOT); ?>)' class="flex items-center gap-xs text-primary hover:underline font-label-sm text-label-sm">
+<span class="material-symbols-outlined text-[18px]">badge</span> View ID
+</button>
 </td>
 <td class="px-lg py-lg">
-<button class="material-symbols-outlined text-secondary hover:text-primary transition-colors" data-icon="more_vert">more_vert</button>
+<span class="px-sm py-xs rounded-full font-label-sm text-label-sm <?php echo $badgeClass; ?>"><?php echo htmlspecialchars($b['booking_status']); ?></span>
+</td>
+<td class="px-lg py-lg">
+<div class="flex items-center gap-xs">
+<?php if ($b['booking_status'] === 'Pending'): ?>
+<a href="<?php echo bqs(['action' => 'confirm', 'id' => $b['id']]); ?>" title="Confirm" class="p-1 text-secondary hover:text-tertiary-container transition-colors"><span class="material-symbols-outlined text-[20px]">check_circle</span></a>
+<a href="<?php echo bqs(['action' => 'cancel', 'id' => $b['id']]); ?>" onclick="return confirm('Cancel this booking?')" title="Cancel" class="p-1 text-secondary hover:text-error transition-colors"><span class="material-symbols-outlined text-[20px]">cancel</span></a>
+<?php elseif ($b['booking_status'] === 'Confirmed'): ?>
+<a href="<?php echo bqs(['action' => 'complete', 'id' => $b['id']]); ?>" title="Mark Completed" class="p-1 text-secondary hover:text-primary transition-colors"><span class="material-symbols-outlined text-[20px]">task_alt</span></a>
+<a href="<?php echo bqs(['action' => 'cancel', 'id' => $b['id']]); ?>" onclick="return confirm('Cancel this booking?')" title="Cancel" class="p-1 text-secondary hover:text-error transition-colors"><span class="material-symbols-outlined text-[20px]">cancel</span></a>
+<?php else: ?>
+<span class="text-secondary text-[12px] italic">No actions</span>
+<?php endif; ?>
+</div>
 </td>
 </tr>
-<!-- Row 2 -->
-<tr class="booking-row transition-colors cursor-pointer">
-<td class="px-lg py-lg font-label-md text-label-md text-primary">#BK-9481</td>
-<td class="px-lg py-lg">
-<div class="flex items-center gap-md">
-<div class="w-8 h-8 rounded-full bg-secondary-container flex items-center justify-center text-primary font-bold text-xs">ML</div>
-<div>
-<p class="font-label-md text-label-md">Maria Lopez</p>
-<p class="font-body-sm text-body-sm text-secondary">m.lopez@cloud.com</p>
-</div>
-</div>
-</td>
-<td class="px-lg py-lg">
-<div class="flex items-center gap-sm">
-<span class="material-symbols-outlined text-secondary" data-icon="directions_car">directions_car</span>
-<div>
-<p class="font-label-md text-label-md">BMW X5</p>
-<p class="font-body-sm text-body-sm text-secondary">White • 2024</p>
-</div>
-</div>
-</td>
-<td class="px-lg py-lg">
-<p class="font-label-sm text-label-sm">Oct 10 - Oct 11</p>
-<p class="font-body-sm text-body-sm text-secondary">1 Day</p>
-</td>
-<td class="px-lg py-lg font-label-md text-label-md">₹210.00</td>
-<td class="px-lg py-lg">
-<span class="px-sm py-xs rounded-full bg-surface-container-highest text-secondary font-label-sm text-label-sm border border-outline-variant">Completed</span>
-</td>
-<td class="px-lg py-lg">
-<button class="material-symbols-outlined text-secondary hover:text-primary transition-colors" data-icon="more_vert">more_vert</button>
-</td>
-</tr>
-<!-- Row 3 -->
-<tr class="booking-row transition-colors cursor-pointer">
-<td class="px-lg py-lg font-label-md text-label-md text-primary">#BK-9480</td>
-<td class="px-lg py-lg">
-<div class="flex items-center gap-md">
-<div class="w-8 h-8 rounded-full bg-error-container/20 flex items-center justify-center text-error font-bold text-xs">RA</div>
-<div>
-<p class="font-label-md text-label-md">Robert Aris</p>
-<p class="font-body-sm text-body-sm text-secondary">raris@web.net</p>
-</div>
-</div>
-</td>
-<td class="px-lg py-lg">
-<div class="flex items-center gap-sm">
-<span class="material-symbols-outlined text-secondary" data-icon="directions_car">directions_car</span>
-<div>
-<p class="font-label-md text-label-md">Audi A4</p>
-<p class="font-body-sm text-body-sm text-secondary">Grey • 2022</p>
-</div>
-</div>
-</td>
-<td class="px-lg py-lg">
-<p class="font-label-sm text-label-sm">Oct 15 - Oct 20</p>
-<p class="font-body-sm text-body-sm text-secondary">5 Days</p>
-</td>
-<td class="px-lg py-lg font-label-md text-label-md">₹625.00</td>
-<td class="px-lg py-lg">
-<span class="px-sm py-xs rounded-full bg-error-container/10 text-error font-label-sm text-label-sm border border-error-container/20">Pending</span>
-</td>
-<td class="px-lg py-lg">
-<button class="material-symbols-outlined text-secondary hover:text-primary transition-colors" data-icon="more_vert">more_vert</button>
-</td>
-</tr>
-<!-- Row 4 -->
-<tr class="booking-row transition-colors cursor-pointer">
-<td class="px-lg py-lg font-label-md text-label-md text-primary">#BK-9479</td>
-<td class="px-lg py-lg">
-<div class="flex items-center gap-md">
-<div class="w-8 h-8 rounded-full bg-secondary-container flex items-center justify-center text-primary font-bold text-xs">EW</div>
-<div>
-<p class="font-label-md text-label-md">Emma Wilson</p>
-<p class="font-body-sm text-body-sm text-secondary">emw@design.io</p>
-</div>
-</div>
-</td>
-<td class="px-lg py-lg">
-<div class="flex items-center gap-sm">
-<span class="material-symbols-outlined text-secondary" data-icon="directions_car">directions_car</span>
-<div>
-<p class="font-label-md text-label-md">Jeep Wrangler</p>
-<p class="font-body-sm text-body-sm text-secondary">Black • 2023</p>
-</div>
-</div>
-</td>
-<td class="px-lg py-lg">
-<p class="font-label-sm text-label-sm">Oct 18 - Oct 22</p>
-<p class="font-body-sm text-body-sm text-secondary">4 Days</p>
-</td>
-<td class="px-lg py-lg font-label-md text-label-md">₹560.00</td>
-<td class="px-lg py-lg">
-<span class="px-sm py-xs rounded-full bg-surface-container-high text-secondary font-label-sm text-label-sm border border-outline-variant opacity-50 line-through">Cancelled</span>
-</td>
-<td class="px-lg py-lg">
-<button class="material-symbols-outlined text-secondary hover:text-primary transition-colors" data-icon="more_vert">more_vert</button>
-</td>
-</tr>
-<!-- Row 5 -->
-<tr class="booking-row transition-colors cursor-pointer">
-<td class="px-lg py-lg font-label-md text-label-md text-primary">#BK-9478</td>
-<td class="px-lg py-lg">
-<div class="flex items-center gap-md">
-<div class="w-8 h-8 rounded-full bg-secondary-container flex items-center justify-center text-primary font-bold text-xs">KB</div>
-<div>
-<p class="font-label-md text-label-md">Kevin Brown</p>
-<p class="font-body-sm text-body-sm text-secondary">kbrown@mail.com</p>
-</div>
-</div>
-</td>
-<td class="px-lg py-lg">
-<div class="flex items-center gap-sm">
-<span class="material-symbols-outlined text-secondary" data-icon="directions_car">directions_car</span>
-<div>
-<p class="font-label-md text-label-md">Toyota RAV4</p>
-<p class="font-body-sm text-body-sm text-secondary">Red • 2022</p>
-</div>
-</div>
-</td>
-<td class="px-lg py-lg">
-<p class="font-label-sm text-label-sm">Oct 20 - Oct 25</p>
-<p class="font-body-sm text-body-sm text-secondary">5 Days</p>
-</td>
-<td class="px-lg py-lg font-label-md text-label-md">₹375.00</td>
-<td class="px-lg py-lg">
-<span class="px-sm py-xs rounded-full bg-tertiary-container/10 text-tertiary-container font-label-sm text-label-sm border border-tertiary-container/20">Confirmed</span>
-</td>
-<td class="px-lg py-lg">
-<button class="material-symbols-outlined text-secondary hover:text-primary transition-colors" data-icon="more_vert">more_vert</button>
-</td>
-</tr>
+<?php endforeach; ?>
 </tbody>
 </table>
 </div>
-<!-- Pagination Footer -->
 <div class="p-lg border-t border-outline-variant flex items-center justify-between bg-surface-bright">
-<p class="font-body-sm text-body-sm text-secondary">Showing 1 to 5 of 1,284 entries</p>
+<p class="font-body-sm text-body-sm text-secondary">Showing <?php echo $totalRows ? ($offset + 1) : 0; ?> to <?php echo min($offset + $perPage, $totalRows); ?> of <?php echo $totalRows; ?> entries</p>
 <div class="flex items-center gap-xs">
-<button class="w-10 h-10 flex items-center justify-center rounded-lg border border-outline-variant hover:bg-surface-container-high transition-colors disabled:opacity-50" disabled="">
+<a href="<?php echo bqs(['page' => max(1, $page - 1)]); ?>" class="w-10 h-10 flex items-center justify-center rounded-lg border border-outline-variant hover:bg-surface-container-high transition-colors <?php echo $page <= 1 ? 'pointer-events-none opacity-30' : ''; ?>">
 <span class="material-symbols-outlined" data-icon="chevron_left">chevron_left</span>
-</button>
-<button class="w-10 h-10 flex items-center justify-center rounded-lg bg-primary text-on-primary font-label-md text-label-md">1</button>
-<button class="w-10 h-10 flex items-center justify-center rounded-lg border border-outline-variant hover:bg-surface-container-high transition-colors font-label-md text-label-md">2</button>
-<button class="w-10 h-10 flex items-center justify-center rounded-lg border border-outline-variant hover:bg-surface-container-high transition-colors font-label-md text-label-md">3</button>
-<span class="px-xs text-secondary">...</span>
-<button class="w-10 h-10 flex items-center justify-center rounded-lg border border-outline-variant hover:bg-surface-container-high transition-colors font-label-md text-label-md">257</button>
-<button class="w-10 h-10 flex items-center justify-center rounded-lg border border-outline-variant hover:bg-surface-container-high transition-colors">
+</a>
+<?php for ($p = 1; $p <= $totalPages; $p++): ?>
+<a href="<?php echo bqs(['page' => $p]); ?>" class="w-10 h-10 flex items-center justify-center rounded-lg font-label-md text-label-md <?php echo $p === $page ? 'bg-primary text-on-primary' : 'border border-outline-variant hover:bg-surface-container-high'; ?>"><?php echo $p; ?></a>
+<?php endfor; ?>
+<a href="<?php echo bqs(['page' => min($totalPages, $page + 1)]); ?>" class="w-10 h-10 flex items-center justify-center rounded-lg border border-outline-variant hover:bg-surface-container-high transition-colors <?php echo $page >= $totalPages ? 'pointer-events-none opacity-30' : ''; ?>">
 <span class="material-symbols-outlined" data-icon="chevron_right">chevron_right</span>
-</button>
+</a>
 </div>
 </div>
 </div>
 </div>
 </main>
-<!-- Micro-interaction Scripts -->
+
+<!-- Identity Document Modal -->
+<div id="idModalOverlay" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-md">
+<div class="bg-surface-container-lowest rounded-xl shadow-lg w-full max-w-lg max-h-[90vh] overflow-y-auto">
+<div class="flex items-center justify-between p-xl border-b border-outline-variant">
+<h3 class="font-headline-sm text-headline-sm text-on-surface">Identity Verification</h3>
+<button type="button" onclick="closeIdModal()" class="text-secondary hover:text-error">
+<span class="material-symbols-outlined">close</span>
+</button>
+</div>
+<div class="p-xl space-y-md">
+<div>
+<p class="font-label-sm text-label-sm text-secondary uppercase">Customer</p>
+<p id="idModalName" class="font-body-md text-body-md text-on-surface font-bold"></p>
+</div>
+<div class="grid grid-cols-2 gap-md">
+<div>
+<p class="font-label-sm text-label-sm text-secondary uppercase">Aadhar Number</p>
+<p id="idModalAadhar" class="font-body-md text-body-md text-on-surface"></p>
+</div>
+<div>
+<p class="font-label-sm text-label-sm text-secondary uppercase">License Number</p>
+<p id="idModalLicense" class="font-body-md text-body-md text-on-surface"></p>
+</div>
+</div>
+<div>
+<p class="font-label-sm text-label-sm text-secondary uppercase mb-xs">Uploaded ID Photo</p>
+<img id="idModalImage" src="" alt="ID Proof" class="w-full rounded-lg border border-outline-variant object-contain max-h-96 bg-surface-container">
+</div>
+</div>
+</div>
+</div>
+
 <script>
-        // Simple row click animation simulation
-        document.querySelectorAll('.booking-row').forEach(row => {
-            row.addEventListener('click', () => {
-                row.classList.add('scale-[0.99]');
-                setTimeout(() => row.classList.remove('scale-[0.99]'), 100);
-            });
-        });
-
-        // Hover feedback for filter buttons
-        const filterBtns = document.querySelectorAll('.px-md.py-sm.rounded-full');
-        filterBtns.forEach(btn => {
-            btn.addEventListener('click', () => {
-                filterBtns.forEach(b => {
-                    b.classList.remove('bg-primary-fixed', 'text-on-primary-fixed');
-                    b.classList.add('text-secondary', 'hover:bg-surface-container-high');
-                });
-                btn.classList.add('bg-primary-fixed', 'text-on-primary-fixed');
-                btn.classList.remove('text-secondary', 'hover:bg-surface-container-high');
-            });
-        });
+        function openIdModal(data) {
+            document.getElementById('idModalName').textContent = data.name;
+            document.getElementById('idModalAadhar').textContent = data.aadhar;
+            document.getElementById('idModalLicense').textContent = data.license;
+            document.getElementById('idModalImage').src = data.image;
+            document.getElementById('idModalOverlay').classList.remove('hidden');
+        }
+        function closeIdModal() {
+            document.getElementById('idModalOverlay').classList.add('hidden');
+        }
     </script>
-
-
-
-
 </body></html>

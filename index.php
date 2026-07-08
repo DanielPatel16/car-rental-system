@@ -144,6 +144,7 @@ session_start();
                     <a class="text-on-surface-variant text-label-md hover:text-primary transition-colors duration-200" href="#">How it Works</a>
                     <a class="text-on-surface-variant text-label-md hover:text-primary transition-colors duration-200" href="#">About</a>
                     <a class="text-on-surface-variant text-label-md hover:text-primary transition-colors duration-200" href="#">Contact</a>
+                    <a class="text-body-sm text-on-surface-variant hover:text-primary transition-colors" href="customer/booking_history.php">Booking History</a>
                 </div>
             </div>
 
