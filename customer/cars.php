@@ -233,6 +233,7 @@ function qs($extra) {
 <a class="text-on-surface-variant hover:text-primary transition-colors duration-200 text-label-md font-label-md" href="#">How it Works</a>
 <a class="text-on-surface-variant hover:text-primary transition-colors duration-200 text-label-md font-label-md" href="#">About</a>
 <a class="text-on-surface-variant hover:text-primary transition-colors duration-200 text-label-md font-label-md" href="#">Contact</a>
+<a class="text-body-sm text-on-surface-variant hover:text-primary transition-colors" href="booking_history.php">Booking History</a>
 </nav>
 <div class="flex items-center gap-md">
 <div class="relative hidden sm:block">
@@ -382,7 +383,7 @@ function qs($extra) {
 <span class="text-label-sm font-label-sm"><?php echo (int) $car['seats']; ?> seats</span>
 </div>
 </div>
-<button class="w-full bg-primary text-on-primary py-3 rounded-lg font-label-md text-label-md hover:bg-primary-container transition-colors mt-auto">Book Now</button>
+<button onclick="window.location='booking.php?car_id=<?php echo (int) $car['id']; ?>'" class="w-full bg-primary text-on-primary py-3 rounded-lg font-label-md text-label-md hover:bg-primary-container transition-colors mt-auto">Book Now</button>
 </div>
 </div>
 <?php endforeach; ?>
