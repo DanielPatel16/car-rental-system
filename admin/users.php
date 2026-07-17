@@ -1,3 +1,321 @@
+<?php
+session_start();
+include "../includes/db.php";
+
+// ---- Auth guard: only logged-in admins may access this page ----
+if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
+    header("Location: ../login.php");
+    exit();
+}
+
+$errors  = [];
+$success = "";
+
+/*
+ * ASSUMPTIONS — please verify against your real schema and adjust if needed:
+ *   1. users table has two new columns (see users_module_migration.sql):
+ *        status  ENUM('Active','Blocked') DEFAULT 'Active'
+ *        phone   VARCHAR(20) NULL
+ *   2. bookings table has at least: id, user_id, car_id, status, total_amount, created_at
+ *      ("Completed" status is what counts toward Lifetime Spend).
+ *   3. cars table has: id, brand, model  (already used elsewhere in the app).
+ * If your bookings table uses different column/status names, update the
+ * queries below (search for "ADJUST" comments).
+ */
+
+// ---------------------------------------------------------------
+// Handle Block / Unblock (?block=ID / ?unblock=ID)
+// ---------------------------------------------------------------
+if (isset($_GET['block']) || isset($_GET['unblock'])) {
+    $targetId  = (int) ($_GET['block'] ?? $_GET['unblock']);
+    $newStatus = isset($_GET['block']) ? 'Blocked' : 'Active';
+
+    $stmt = $conn->prepare("UPDATE users SET status = ? WHERE id = ? AND role = 'user'");
+    $stmt->bind_param("si", $newStatus, $targetId);
+    $stmt->execute();
+    $stmt->close();
+
+    $redirectQs = $_GET;
+    unset($redirectQs['block'], $redirectQs['unblock']);
+    header("Location: users.php" . ($redirectQs ? '?' . http_build_query($redirectQs) : ''));
+    exit();
+}
+
+// ---------------------------------------------------------------
+// Handle Add Customer (POST)
+// ---------------------------------------------------------------
+if ($_SERVER["REQUEST_METHOD"] === "POST" && ($_POST['action'] ?? '') === 'add_customer') {
+
+    $name     = trim($_POST['user_name'] ?? '');
+    $email    = trim($_POST['email'] ?? '');
+    $phone    = trim($_POST['phone'] ?? '');
+    $password = trim($_POST['password'] ?? '');
+
+    if ($name === '' || $email === '' || $password === '') {
+        $errors[] = "Name, email and password are required.";
+    }
+    if ($password !== '' && strlen($password) < 6) {
+        $errors[] = "Password must be at least 6 characters.";
+    }
+
+    if (empty($errors)) {
+        $check = $conn->prepare("SELECT id FROM users WHERE email = ?");
+        $check->bind_param("s", $email);
+        $check->execute();
+        $check->store_result();
+        if ($check->num_rows > 0) {
+            $errors[] = "A user with this email already exists.";
+        }
+        $check->close();
+    }
+
+    if (empty($errors)) {
+        $hashed = password_hash($password, PASSWORD_DEFAULT);
+        $stmt = $conn->prepare(
+            "INSERT INTO users (user_name, email, phone, password, role, status) VALUES (?,?,?,?,'user','Active')"
+        );
+        $stmt->bind_param("ssss", $name, $email, $phone, $hashed);
+
+        if ($stmt->execute()) {
+            $success = "Customer added successfully.";
+        } else {
+            $errors[] = "Could not add customer: " . $stmt->error;
+        }
+        $stmt->close();
+    }
+}
+
+// ---------------------------------------------------------------
+// Handle Edit Profile (POST)
+// ---------------------------------------------------------------
+if ($_SERVER["REQUEST_METHOD"] === "POST" && ($_POST['action'] ?? '') === 'edit_customer') {
+
+    $editId   = (int) ($_POST['user_id'] ?? 0);
+    $name     = trim($_POST['user_name'] ?? '');
+    $email    = trim($_POST['email'] ?? '');
+    $phone    = trim($_POST['phone'] ?? '');
+    $password = trim($_POST['password'] ?? ''); // optional: only set if provided
+
+    if ($editId <= 0) {
+        $errors[] = "Invalid customer.";
+    }
+    if ($name === '' || $email === '') {
+        $errors[] = "Name and email are required.";
+    }
+    if ($password !== '' && strlen($password) < 6) {
+        $errors[] = "Password must be at least 6 characters.";
+    }
+
+    if (empty($errors)) {
+        // Make sure the email isn't already used by a *different* user
+        $check = $conn->prepare("SELECT id FROM users WHERE email = ? AND id != ?");
+        $check->bind_param("si", $email, $editId);
+        $check->execute();
+        $check->store_result();
+        if ($check->num_rows > 0) {
+            $errors[] = "Another user already uses this email.";
+        }
+        $check->close();
+    }
+
+    if (empty($errors)) {
+        if ($password !== '') {
+            $hashed = password_hash($password, PASSWORD_DEFAULT);
+            $stmt = $conn->prepare(
+                "UPDATE users SET user_name = ?, email = ?, phone = ?, password = ? WHERE id = ? AND role = 'user'"
+            );
+            $stmt->bind_param("ssssi", $name, $email, $phone, $hashed, $editId);
+        } else {
+            $stmt = $conn->prepare(
+                "UPDATE users SET user_name = ?, email = ?, phone = ? WHERE id = ? AND role = 'user'"
+            );
+            $stmt->bind_param("sssi", $name, $email, $phone, $editId);
+        }
+
+        if ($stmt->execute()) {
+            $success = "Customer profile updated successfully.";
+        } else {
+            $errors[] = "Could not update customer: " . $stmt->error;
+        }
+        $stmt->close();
+    }
+}
+
+// ---------------------------------------------------------------
+// Shared filter-building (used by both the listing query and CSV export)
+// ---------------------------------------------------------------
+$tab    = $_GET['tab'] ?? 'all';         // all | active | blocked | top
+$search = trim($_GET['q'] ?? '');
+$sort   = $_GET['sort'] ?? 'newest';     // newest | oldest | az | most_bookings
+
+$where  = ["u.role = 'user'"];
+$params = [];
+$types  = "";
+
+if ($tab === 'active') {
+    $where[] = "u.status = 'Active'";
+} elseif ($tab === 'blocked') {
+    $where[] = "u.status = 'Blocked'";
+}
+
+if ($search !== '') {
+    $like = "%$search%";
+    $where[]  = "(u.user_name LIKE ? OR u.email LIKE ? OR u.phone LIKE ?)";
+    $params[] = $like; $params[] = $like; $params[] = $like;
+    $types   .= "sss";
+}
+
+$whereSql = "WHERE " . implode(" AND ", $where);
+$having   = ($tab === 'top') ? "HAVING booking_count > 0" : "";
+
+$orderBy = "u.created_at DESC";
+if ($sort === 'oldest')        $orderBy = "u.created_at ASC";
+if ($sort === 'az')            $orderBy = "u.user_name ASC";
+if ($sort === 'most_bookings') $orderBy = "booking_count DESC";
+if ($tab === 'top')            $orderBy = "lifetime_spend DESC"; // Top Spenders tab always sorts by spend
+
+// ---------------------------------------------------------------
+// Export CSV (?export=csv) — honours the current filters, no pagination
+// ---------------------------------------------------------------
+if (isset($_GET['export']) && $_GET['export'] === 'csv') {
+
+    $sql = "SELECT u.id, u.user_name, u.email, u.phone, u.status, u.created_at,
+                   COUNT(b.id) AS booking_count,
+                   COALESCE(SUM(CASE WHEN b.booking_status = 'Completed' THEN b.total_amount ELSE 0 END), 0) AS lifetime_spend
+            FROM users u
+            LEFT JOIN bookings b ON b.user_id = u.id
+            $whereSql
+            GROUP BY u.id
+            $having
+            ORDER BY $orderBy";
+    $stmt = $conn->prepare($sql);
+    if ($types) $stmt->bind_param($types, ...$params);
+    $stmt->execute();
+    $rows = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+    $stmt->close();
+
+    header('Content-Type: text/csv');
+    header('Content-Disposition: attachment; filename="customers.csv"');
+    $out = fopen('php://output', 'w');
+    fputcsv($out, ['ID', 'Name', 'Email', 'Phone', 'Status', 'Joined', 'Bookings', 'Lifetime Spend']);
+    foreach ($rows as $r) {
+        fputcsv($out, [
+            'DE-' . str_pad($r['id'], 4, '0', STR_PAD_LEFT),
+            $r['user_name'], $r['email'], $r['phone'], $r['status'],
+            date('M d, Y', strtotime($r['created_at'])),
+            $r['booking_count'], number_format($r['lifetime_spend'], 2),
+        ]);
+    }
+    fclose($out);
+    $conn->close();
+    exit();
+}
+
+// ---------------------------------------------------------------
+// Pagination
+// ---------------------------------------------------------------
+$perPage = 10;
+$page    = max(1, (int) ($_GET['page'] ?? 1));
+$offset  = ($page - 1) * $perPage;
+
+$countSql = "SELECT COUNT(*) AS total FROM (
+                SELECT u.id, COUNT(b.id) AS booking_count
+                FROM users u
+                LEFT JOIN bookings b ON b.user_id = u.id
+                $whereSql
+                GROUP BY u.id
+                $having
+             ) t";
+$countStmt = $conn->prepare($countSql);
+if ($types) $countStmt->bind_param($types, ...$params);
+$countStmt->execute();
+$totalRows  = (int) $countStmt->get_result()->fetch_assoc()['total'];
+$totalPages = max(1, (int) ceil($totalRows / $perPage));
+$countStmt->close();
+
+$sql = "SELECT u.*,
+               COUNT(b.id) AS booking_count,
+               COALESCE(SUM(CASE WHEN b.booking_status = 'Completed' THEN b.total_amount ELSE 0 END), 0) AS lifetime_spend
+        FROM users u
+        LEFT JOIN bookings b ON b.user_id = u.id
+        $whereSql
+        GROUP BY u.id
+        $having
+        ORDER BY $orderBy
+        LIMIT ? OFFSET ?";
+$stmt = $conn->prepare($sql);
+$allTypes  = $types . "ii";
+$allParams = array_merge($params, [$perPage, $offset]);
+$stmt->bind_param($allTypes, ...$allParams);
+$stmt->execute();
+$users = $stmt->get_result()->fetch_all(MYSQLI_ASSOC);
+$stmt->close();
+
+// ---------------------------------------------------------------
+// Recent bookings for the users on this page (for the details panel)
+// ---------------------------------------------------------------
+$bookingsByUser = [];
+if (!empty($users)) {
+    $ids = array_column($users, 'id');
+    $placeholders = implode(",", array_fill(0, count($ids), "?"));
+    $bTypes = str_repeat("i", count($ids));
+
+    $bStmt = $conn->prepare(
+        "SELECT b.user_id, b.booking_status, b.total_amount, b.created_at,
+                b.pickup_date, b.return_date,
+                c.brand, c.model
+         FROM bookings b
+         LEFT JOIN cars c ON c.id = b.car_id
+         WHERE b.user_id IN ($placeholders)
+         ORDER BY b.created_at DESC"
+    );
+    $bStmt->bind_param($bTypes, ...$ids);
+    $bStmt->execute();
+    $bRes = $bStmt->get_result();
+    while ($row = $bRes->fetch_assoc()) {
+        $uid = $row['user_id'];
+        if (!isset($bookingsByUser[$uid])) $bookingsByUser[$uid] = [];
+        $bookingsByUser[$uid][] = $row; // keep full history; UI decides how much to show
+    }
+    $bStmt->close();
+}
+
+// ---------------------------------------------------------------
+// Stat cards
+// ---------------------------------------------------------------
+$totalCustomers = (int) $conn->query("SELECT COUNT(*) c FROM users WHERE role = 'user'")->fetch_assoc()['c'];
+$activeCount    = (int) $conn->query("SELECT COUNT(*) c FROM users WHERE role = 'user' AND status = 'Active'")->fetch_assoc()['c'];
+$blockedCount   = (int) $conn->query("SELECT COUNT(*) c FROM users WHERE role = 'user' AND status = 'Blocked'")->fetch_assoc()['c'];
+
+$newThisMonth = (int) $conn->query(
+    "SELECT COUNT(*) c FROM users WHERE role = 'user' AND created_at >= DATE_FORMAT(NOW(), '%Y-%m-01')"
+)->fetch_assoc()['c'];
+$newLastMonth = (int) $conn->query(
+    "SELECT COUNT(*) c FROM users WHERE role = 'user'
+     AND created_at >= DATE_FORMAT(NOW() - INTERVAL 1 MONTH, '%Y-%m-01')
+     AND created_at <  DATE_FORMAT(NOW(), '%Y-%m-01')"
+)->fetch_assoc()['c'];
+
+$monthGrowth = $newLastMonth > 0
+    ? round((($newThisMonth - $newLastMonth) / $newLastMonth) * 100, 1)
+    : ($newThisMonth > 0 ? 100 : 0);
+$activePercent = $totalCustomers > 0 ? round(($activeCount / $totalCustomers) * 100) : 0;
+
+function qs($extra) {
+    $qs = $_GET;
+    foreach ($extra as $k => $v) {
+        if ($v === null) unset($qs[$k]); else $qs[$k] = $v;
+    }
+    return 'users.php?' . http_build_query($qs);
+}
+
+function initials($name) {
+    $parts = preg_split('/\s+/', trim($name));
+    $ini = '';
+    foreach (array_slice($parts, 0, 2) as $p) $ini .= mb_strtoupper(mb_substr($p, 0, 1));
+    return $ini ?: '?';
+}
+?>
 <!DOCTYPE html>
 
 <html class="light" lang="en"><head>
@@ -15,10 +333,11 @@
 <!-- TopNavBar -->
 <header class="h-16 flex justify-between items-center px-xl w-full bg-surface border-b border-outline-variant sticky top-0 z-20">
 <div class="flex items-center gap-xl w-1/2">
-<div class="relative w-full max-w-md group">
+<form method="GET" class="relative w-full max-w-md group">
+<?php foreach (['tab','sort'] as $k) if (isset($_GET[$k])) echo '<input type="hidden" name="' . $k . '" value="' . htmlspecialchars($_GET[$k]) . '">'; ?>
 <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-secondary">search</span>
-<input class="w-full pl-10 pr-md py-sm bg-surface-container-lowest border border-outline-variant rounded-lg font-body-sm focus:ring-2 focus:ring-primary focus:border-primary outline-none transition-all" placeholder="Search customers by name, email or phone..." type="text"/>
-</div>
+<input class="w-full pl-10 pr-md py-sm bg-surface-container-lowest border border-outline-variant rounded-lg font-body-sm focus:ring-2 focus:ring-primary focus:border-primary outline-none transition-all" placeholder="Search customers by name, email or phone..." type="text" name="q" value="<?php echo htmlspecialchars($search); ?>"/>
+</form>
 </div>
 <div class="flex items-center gap-lg">
 <button class="p-base text-secondary hover:text-primary transition-colors active:scale-95">
@@ -29,15 +348,25 @@
 </button>
 <div class="w-px h-6 bg-outline-variant mx-sm"></div>
 <div class="flex items-center gap-sm">
-<span class="font-label-md text-on-surface">Admin User</span>
+<span class="font-label-md text-on-surface"><?php echo htmlspecialchars($_SESSION['user_name'] ?? 'Admin'); ?></span>
 <div class="w-8 h-8 rounded-full bg-primary-fixed flex items-center justify-center text-on-primary-fixed font-bold text-xs">
-                            AU
+                            <?php echo htmlspecialchars(initials($_SESSION['user_name'] ?? 'Admin')); ?>
                         </div>
 </div>
 </div>
 </header>
 <!-- Dashboard Content -->
 <div class="flex-1 overflow-y-auto p-xl custom-scrollbar">
+
+<?php if ($success): ?>
+<div class="mb-lg p-md bg-tertiary-fixed/40 border border-tertiary text-on-tertiary-fixed-variant rounded-lg font-body-md text-body-md"><?php echo htmlspecialchars($success); ?></div>
+<?php endif; ?>
+<?php if ($errors): ?>
+<div class="mb-lg p-md bg-error-container border border-error text-on-error-container rounded-lg font-body-md text-body-md">
+<?php foreach ($errors as $e) echo "<p>" . htmlspecialchars($e) . "</p>"; ?>
+</div>
+<?php endif; ?>
+
 <!-- Page Title & Quick Actions -->
 <div class="flex justify-between items-end mb-xl">
 <div>
@@ -45,11 +374,11 @@
 <p class="font-body-md text-secondary">Manage registered users, view rental history, and adjust account statuses.</p>
 </div>
 <div class="flex gap-md">
-<button class="flex items-center gap-sm px-lg py-md border border-outline bg-surface rounded-lg font-label-md text-secondary hover:bg-surface-container-high transition-colors">
+<button type="button" onclick="window.location='<?php echo qs(['export' => 'csv']); ?>'" class="flex items-center gap-sm px-lg py-md border border-outline bg-surface rounded-lg font-label-md text-secondary hover:bg-surface-container-high transition-colors">
 <span class="material-symbols-outlined">download</span>
                             Export CSV
                         </button>
-<button class="flex items-center gap-sm px-lg py-md bg-primary text-on-primary rounded-lg font-label-md shadow-sm hover:opacity-90 transition-all">
+<button type="button" onclick="openAddCustomerModal()" class="flex items-center gap-sm px-lg py-md bg-primary text-on-primary rounded-lg font-label-md shadow-sm hover:opacity-90 transition-all">
 <span class="material-symbols-outlined">person_add</span>
                             Add Customer
                         </button>
@@ -63,8 +392,8 @@
 <span class="material-symbols-outlined text-primary">groups</span>
 </div>
 <div class="flex items-baseline gap-sm">
-<span class="font-headline-lg text-headline-lg">2,845</span>
-<span class="font-label-sm text-tertiary-container flex items-center">+12% <span class="material-symbols-outlined text-xs">trending_up</span></span>
+<span class="font-headline-lg text-headline-lg"><?php echo number_format($totalCustomers); ?></span>
+<span class="font-label-sm <?php echo $monthGrowth >= 0 ? 'text-tertiary-container' : 'text-error'; ?> flex items-center"><?php echo ($monthGrowth >= 0 ? '+' : '') . $monthGrowth; ?>% <span class="material-symbols-outlined text-xs"><?php echo $monthGrowth >= 0 ? 'trending_up' : 'trending_down'; ?></span></span>
 </div>
 </div>
 <div class="bg-surface-container-lowest p-lg rounded-xl border border-outline-variant shadow-sm flex flex-col gap-sm">
@@ -73,8 +402,8 @@
 <span class="material-symbols-outlined text-tertiary-fixed-dim">verified_user</span>
 </div>
 <div class="flex items-baseline gap-sm">
-<span class="font-headline-lg text-headline-lg">2,102</span>
-<span class="font-label-sm text-secondary">74% of total</span>
+<span class="font-headline-lg text-headline-lg"><?php echo number_format($activeCount); ?></span>
+<span class="font-label-sm text-secondary"><?php echo $activePercent; ?>% of total</span>
 </div>
 </div>
 <div class="bg-surface-container-lowest p-lg rounded-xl border border-outline-variant shadow-sm flex flex-col gap-sm">
@@ -83,8 +412,8 @@
 <span class="material-symbols-outlined text-on-primary-fixed-variant">person_add_alt</span>
 </div>
 <div class="flex items-baseline gap-sm">
-<span class="font-headline-lg text-headline-lg">184</span>
-<span class="font-label-sm text-error flex items-center">-2% <span class="material-symbols-outlined text-xs">trending_down</span></span>
+<span class="font-headline-lg text-headline-lg"><?php echo number_format($newThisMonth); ?></span>
+<span class="font-label-sm <?php echo $monthGrowth >= 0 ? 'text-tertiary-container' : 'text-error'; ?> flex items-center"><?php echo ($monthGrowth >= 0 ? '+' : '') . $monthGrowth; ?>% <span class="material-symbols-outlined text-xs"><?php echo $monthGrowth >= 0 ? 'trending_up' : 'trending_down'; ?></span></span>
 </div>
 </div>
 <div class="bg-surface-container-lowest p-lg rounded-xl border border-outline-variant shadow-sm flex flex-col gap-sm">
@@ -93,7 +422,7 @@
 <span class="material-symbols-outlined text-error">block</span>
 </div>
 <div class="flex items-baseline gap-sm">
-<span class="font-headline-lg text-headline-lg">42</span>
+<span class="font-headline-lg text-headline-lg"><?php echo number_format($blockedCount); ?></span>
 <span class="font-label-sm text-secondary">Flagged for review</span>
 </div>
 </div>
@@ -101,20 +430,21 @@
 <!-- Filters Bar -->
 <div class="flex items-center justify-between bg-surface-container-low p-md rounded-lg mb-lg">
 <div class="flex items-center gap-md">
-<button class="px-md py-sm bg-surface-container-highest text-primary font-label-md rounded-md border border-primary-container">All Users</button>
-<button class="px-md py-sm text-secondary hover:text-on-surface font-label-md transition-colors">Active</button>
-<button class="px-md py-sm text-secondary hover:text-on-surface font-label-md transition-colors">Blocked</button>
-<button class="px-md py-sm text-secondary hover:text-on-surface font-label-md transition-colors">Top Spenders</button>
+<a href="<?php echo qs(['tab' => null, 'page' => null]); ?>" class="px-md py-sm <?php echo $tab === 'all' ? 'bg-surface-container-highest text-primary border border-primary-container' : 'text-secondary hover:text-on-surface'; ?> font-label-md rounded-md transition-colors">All Users</a>
+<a href="<?php echo qs(['tab' => 'active', 'page' => null]); ?>" class="px-md py-sm <?php echo $tab === 'active' ? 'bg-surface-container-highest text-primary border border-primary-container' : 'text-secondary hover:text-on-surface'; ?> font-label-md rounded-md transition-colors">Active</a>
+<a href="<?php echo qs(['tab' => 'blocked', 'page' => null]); ?>" class="px-md py-sm <?php echo $tab === 'blocked' ? 'bg-surface-container-highest text-primary border border-primary-container' : 'text-secondary hover:text-on-surface'; ?> font-label-md rounded-md transition-colors">Blocked</a>
+<a href="<?php echo qs(['tab' => 'top', 'page' => null]); ?>" class="px-md py-sm <?php echo $tab === 'top' ? 'bg-surface-container-highest text-primary border border-primary-container' : 'text-secondary hover:text-on-surface'; ?> font-label-md rounded-md transition-colors">Top Spenders</a>
 </div>
-<div class="flex items-center gap-sm">
+<form method="GET" class="flex items-center gap-sm">
+<?php foreach (['tab','q'] as $k) if (isset($_GET[$k])) echo '<input type="hidden" name="' . $k . '" value="' . htmlspecialchars($_GET[$k]) . '">'; ?>
 <span class="font-label-sm text-secondary">Sort by:</span>
-<select class="bg-transparent border-none font-label-md text-on-surface focus:ring-0 cursor-pointer">
-<option>Joined Date (Newest)</option>
-<option>Joined Date (Oldest)</option>
-<option>Alphabetical A-Z</option>
-<option>Most Bookings</option>
+<select name="sort" onchange="this.form.submit()" class="bg-transparent border-none font-label-md text-on-surface focus:ring-0 cursor-pointer">
+<option value="newest" <?php echo $sort === 'newest' ? 'selected' : ''; ?>>Joined Date (Newest)</option>
+<option value="oldest" <?php echo $sort === 'oldest' ? 'selected' : ''; ?>>Joined Date (Oldest)</option>
+<option value="az" <?php echo $sort === 'az' ? 'selected' : ''; ?>>Alphabetical A-Z</option>
+<option value="most_bookings" <?php echo $sort === 'most_bookings' ? 'selected' : ''; ?>>Most Bookings</option>
 </select>
-</div>
+</form>
 </div>
 <!-- Customer Table Container -->
 <div class="bg-surface-container-lowest rounded-xl border border-outline-variant shadow-sm overflow-hidden">
@@ -130,195 +460,113 @@
 </tr>
 </thead>
 <tbody class="divide-y divide-outline-variant">
-<!-- User Row 1 -->
+<?php if (empty($users)): ?>
+<tr>
+<td colspan="6" class="p-2xl text-center text-secondary font-body-md text-body-md">No customers found.</td>
+</tr>
+<?php endif; ?>
+<?php foreach ($users as $u):
+    $isBlocked = $u['status'] === 'Blocked';
+    $panelData = [
+        'id' => $u['id'],
+        'name' => $u['user_name'],
+        'email' => $u['email'],
+        'phone' => $u['phone'] ?? '',
+        'joined' => date('M d, Y', strtotime($u['created_at'])),
+        'status' => $u['status'],
+        'spend' => number_format((float) $u['lifetime_spend'], 2),
+        'bookings' => array_map(function ($b) {
+            return [
+                'car' => trim(($b['brand'] ?? '') . ' ' . ($b['model'] ?? '')) ?: 'Vehicle',
+                'range' => date('M d', strtotime($b['pickup_date'])) . ' - ' . date('M d', strtotime($b['return_date'])),
+                'status' => $b['booking_status'],
+                'amount' => number_format((float) $b['total_amount'], 2),
+                'booked_on' => date('M d, Y', strtotime($b['created_at'])),
+            ];
+        }, $bookingsByUser[$u['id']] ?? []),
+    ];
+?>
+<!-- User Row -->
 <tr class="hover:bg-surface-container-low transition-colors group">
 <td class="p-lg">
 <div class="flex items-center gap-md">
-<img class="w-10 h-10 rounded-full object-cover" data-alt="A professional headshot of a middle-aged woman with glasses and a friendly smile, photographed in a minimalist studio with soft lighting. The background uses a subtle light blue gradient that aligns with the DriveEase color palette. The aesthetic is modern, clean, and high-trust, suitable for a corporate CRM interface." src="https://lh3.googleusercontent.com/aida-public/AB6AXuBXzSype8WWjL6UUnDf51gWWCbiCaLD1u8jIwjhE4s5x7lnfm6twoi-XPXhLyWh4jAtPrsf_BwdOCgbf0YeCM2Ozm0fgm0okDcq_i5reM6ZsYJdCZjJmcIaxouA0juvZnsOzuG8lB2Oeba53ielH8jK6MS4G-yY5U97BxR4KqckuMrZNp2RV9T-SRQl1tVOViBW86zC3cUeeT0q1ZB5kbsboEuS8bGjzpawBZv374UKg04NjX-q6IuUYzUDa4p2C8ilsJfZ6Tojwuc"/>
+<div class="w-10 h-10 rounded-full bg-secondary-container flex items-center justify-center text-on-secondary-container font-bold <?php echo $isBlocked ? 'grayscale opacity-80' : ''; ?>"><?php echo htmlspecialchars(initials($u['user_name'])); ?></div>
 <div>
-<p class="font-label-md text-on-surface">Sarah Jenkins</p>
-<p class="font-label-sm text-secondary">ID: DE-8201</p>
+<p class="font-label-md text-on-surface"><?php echo htmlspecialchars($u['user_name']); ?></p>
+<p class="font-label-sm text-secondary">ID: DE-<?php echo str_pad($u['id'], 4, '0', STR_PAD_LEFT); ?></p>
 </div>
 </div>
 </td>
 <td class="p-lg">
-<p class="font-body-sm text-on-surface">s.jenkins@example.com</p>
-<p class="font-body-sm text-secondary">+1 (555) 019-2348</p>
+<p class="font-body-sm text-on-surface"><?php echo htmlspecialchars($u['email']); ?></p>
+<p class="font-body-sm text-secondary"><?php echo htmlspecialchars($u['phone'] ?: '—'); ?></p>
 </td>
 <td class="p-lg">
-<p class="font-body-sm text-on-surface">Oct 12, 2023</p>
-<p class="font-label-sm text-secondary">10:45 AM</p>
+<p class="font-body-sm text-on-surface"><?php echo date('M d, Y', strtotime($u['created_at'])); ?></p>
+<p class="font-label-sm text-secondary"><?php echo date('h:i A', strtotime($u['created_at'])); ?></p>
 </td>
 <td class="p-lg">
 <div class="flex items-center gap-xs">
-<span class="font-label-md text-on-surface">24</span>
-<span class="material-symbols-outlined text-sm text-tertiary-fixed-dim" style="font-variation-settings: 'FILL' 1;">star</span>
+<span class="font-label-md text-on-surface"><?php echo (int) $u['booking_count']; ?></span>
+<?php if ($u['booking_count'] > 0): ?><span class="material-symbols-outlined text-sm text-tertiary-fixed-dim" style="font-variation-settings: 'FILL' 1;">star</span><?php endif; ?>
 </div>
 </td>
 <td class="p-lg">
+<?php if (!$isBlocked): ?>
 <span class="px-md py-xs rounded-full bg-tertiary-fixed/20 text-on-tertiary-fixed-variant font-label-sm inline-flex items-center gap-xs">
 <span class="w-1.5 h-1.5 rounded-full bg-on-tertiary-fixed-variant"></span>
                                         Active
                                     </span>
-</td>
-<td class="p-lg text-right">
-<div class="flex justify-end gap-xs">
-<button class="p-sm text-secondary hover:text-primary transition-colors rounded-md hover:bg-surface-container-high" title="View Details">
-<span class="material-symbols-outlined">visibility</span>
-</button>
-<button class="p-sm text-secondary hover:text-error transition-colors rounded-md hover:bg-error-container" title="Block User">
-<span class="material-symbols-outlined">block</span>
-</button>
-<button class="p-sm text-secondary hover:text-on-surface transition-colors rounded-md hover:bg-surface-container-high">
-<span class="material-symbols-outlined">more_vert</span>
-</button>
-</div>
-</td>
-</tr>
-<!-- User Row 2 -->
-<tr class="hover:bg-surface-container-low transition-colors group">
-<td class="p-lg">
-<div class="flex items-center gap-md">
-<div class="w-10 h-10 rounded-full bg-secondary-container flex items-center justify-center text-on-secondary-container font-bold">MH</div>
-<div>
-<p class="font-label-md text-on-surface">Marcus Holloway</p>
-<p class="font-label-sm text-secondary">ID: DE-7942</p>
-</div>
-</div>
-</td>
-<td class="p-lg">
-<p class="font-body-sm text-on-surface">marcus.h@techcorp.com</p>
-<p class="font-body-sm text-secondary">+1 (555) 012-9930</p>
-</td>
-<td class="p-lg">
-<p class="font-body-sm text-on-surface">Nov 05, 2023</p>
-<p class="font-label-sm text-secondary">03:22 PM</p>
-</td>
-<td class="p-lg">
-<span class="font-label-md text-on-surface">12</span>
-</td>
-<td class="p-lg">
-<span class="px-md py-xs rounded-full bg-tertiary-fixed/20 text-on-tertiary-fixed-variant font-label-sm inline-flex items-center gap-xs">
-<span class="w-1.5 h-1.5 rounded-full bg-on-tertiary-fixed-variant"></span>
-                                        Active
-                                    </span>
-</td>
-<td class="p-lg text-right">
-<div class="flex justify-end gap-xs">
-<button class="p-sm text-secondary hover:text-primary transition-colors rounded-md hover:bg-surface-container-high">
-<span class="material-symbols-outlined">visibility</span>
-</button>
-<button class="p-sm text-secondary hover:text-error transition-colors rounded-md hover:bg-error-container">
-<span class="material-symbols-outlined">block</span>
-</button>
-<button class="p-sm text-secondary hover:text-on-surface transition-colors rounded-md hover:bg-surface-container-high">
-<span class="material-symbols-outlined">more_vert</span>
-</button>
-</div>
-</td>
-</tr>
-<!-- User Row 3 (Blocked) -->
-<tr class="hover:bg-surface-container-low transition-colors group">
-<td class="p-lg">
-<div class="flex items-center gap-md">
-<img class="w-10 h-10 rounded-full object-cover grayscale opacity-80" data-alt="A clean, minimalist portrait of a man with short dark hair wearing a navy blue polo shirt. He has a neutral expression. The background is a soft, out-of-focus city skyline at dusk, using muted tones of blue and gray that complement the DriveEase interface. High-end, professional corporate photography style." src="https://lh3.googleusercontent.com/aida-public/AB6AXuBKTdETOQmUwRlrn3xRB_Dhc1sVs5PGwEhvkjEX3N-97FxkgA7ew942YlrLD8GSVC6LrTzBkkMUE7B2KCtkF35As2BiOo3zI52KozEyA-emC6wCW5v0tGfJeOxy9rdazZN50rHJRzLwb-_UsjyhMxkPopECTkCRLHw_Y0hVRXUbAb1W-zetstzGOwuUb8rUojbf6_zZLbAIoxRCdxKgFVnLXBDANk70iR8hUbI9YpK8W9O1c_UX6LXSpzQakTkqJneesHy8Aer7nLc"/>
-<div>
-<p class="font-label-md text-on-surface">David Chen</p>
-<p class="font-label-sm text-secondary">ID: DE-5521</p>
-</div>
-</div>
-</td>
-<td class="p-lg">
-<p class="font-body-sm text-on-surface">d.chen_88@outlook.com</p>
-<p class="font-body-sm text-secondary">+1 (555) 018-4421</p>
-</td>
-<td class="p-lg">
-<p class="font-body-sm text-on-surface">Aug 22, 2023</p>
-<p class="font-label-sm text-secondary">09:12 AM</p>
-</td>
-<td class="p-lg">
-<span class="font-label-md text-on-surface">2</span>
-</td>
-<td class="p-lg">
+<?php else: ?>
 <span class="px-md py-xs rounded-full bg-error-container text-on-error-container font-label-sm inline-flex items-center gap-xs">
 <span class="w-1.5 h-1.5 rounded-full bg-on-error-container"></span>
                                         Blocked
                                     </span>
+<?php endif; ?>
 </td>
 <td class="p-lg text-right">
 <div class="flex justify-end gap-xs">
-<button class="p-sm text-secondary hover:text-primary transition-colors rounded-md hover:bg-surface-container-high">
+<button type="button" onclick='openDetails(<?php echo json_encode($panelData, JSON_HEX_APOS | JSON_HEX_QUOT); ?>)' class="p-sm text-secondary hover:text-primary transition-colors rounded-md hover:bg-surface-container-high" title="View Details">
 <span class="material-symbols-outlined">visibility</span>
 </button>
-<button class="p-sm text-tertiary hover:text-primary-fixed-dim transition-colors rounded-md hover:bg-surface-container-high" title="Unblock User">
-<span class="material-symbols-outlined">check_circle</span>
-</button>
-<button class="p-sm text-secondary hover:text-on-surface transition-colors rounded-md hover:bg-surface-container-high">
-<span class="material-symbols-outlined">more_vert</span>
-</button>
-</div>
-</td>
-</tr>
-<!-- User Row 4 -->
-<tr class="hover:bg-surface-container-low transition-colors group">
-<td class="p-lg">
-<div class="flex items-center gap-md">
-<img class="w-10 h-10 rounded-full object-cover" data-alt="A bright, professional close-up of a young woman with curly hair wearing a modern yellow sweater. She looks confident and approachable. The lighting is natural and crisp, creating a high-trust atmosphere. The background is a clean, modern coworking space with plants and glass walls, reflecting the high-performance SaaS brand style of DriveEase." src="https://lh3.googleusercontent.com/aida-public/AB6AXuCXrXxyrZVE0ABNVisH-g9kGhF5HwbMi4W3SqAVodM92dao-7hciyv9eBiFX-1jC6TQhAxEeDv2qysQzFzHdqcYAMPNXcl6oowxHEyxJXpqz339HUVpqBeFfUp1Zai5MUYmuKfV5gtkI9mzEJcRA7h8lciboB_i98yPEHc5s5bw5EP88zJaOtQCD61YDdKPWrvwgweMl5BYedsYgmZPEg7t1MfwWtDFxrEugKQOt0H8HWBZkeHZX95PwwcQ-ayUwf-bal9yJiLbJzQ"/>
-<div>
-<p class="font-label-md text-on-surface">Elena Rodriguez</p>
-<p class="font-label-sm text-secondary">ID: DE-9012</p>
-</div>
-</div>
-</td>
-<td class="p-lg">
-<p class="font-body-sm text-on-surface">elena.rod@global.net</p>
-<p class="font-body-sm text-secondary">+1 (555) 014-7732</p>
-</td>
-<td class="p-lg">
-<p class="font-body-sm text-on-surface">Jan 14, 2024</p>
-<p class="font-label-sm text-secondary">11:58 AM</p>
-</td>
-<td class="p-lg">
-<span class="font-label-md text-on-surface">45</span>
-</td>
-<td class="p-lg">
-<span class="px-md py-xs rounded-full bg-tertiary-fixed/20 text-on-tertiary-fixed-variant font-label-sm inline-flex items-center gap-xs">
-<span class="w-1.5 h-1.5 rounded-full bg-on-tertiary-fixed-variant"></span>
-                                        Active
-                                    </span>
-</td>
-<td class="p-lg text-right">
-<div class="flex justify-end gap-xs">
-<button class="p-sm text-secondary hover:text-primary transition-colors rounded-md hover:bg-surface-container-high">
-<span class="material-symbols-outlined">visibility</span>
-</button>
-<button class="p-sm text-secondary hover:text-error transition-colors rounded-md hover:bg-error-container">
+<?php if (!$isBlocked): ?>
+<a href="<?php echo qs(['block' => $u['id']]); ?>" onclick="return confirm('Block this customer? They will be prevented from logging in.')" class="p-sm text-secondary hover:text-error transition-colors rounded-md hover:bg-error-container" title="Block User">
 <span class="material-symbols-outlined">block</span>
-</button>
+</a>
+<?php else: ?>
+<a href="<?php echo qs(['unblock' => $u['id']]); ?>" class="p-sm text-tertiary hover:text-primary-fixed-dim transition-colors rounded-md hover:bg-surface-container-high" title="Unblock User">
+<span class="material-symbols-outlined">check_circle</span>
+</a>
+<?php endif; ?>
 <button class="p-sm text-secondary hover:text-on-surface transition-colors rounded-md hover:bg-surface-container-high">
 <span class="material-symbols-outlined">more_vert</span>
 </button>
 </div>
 </td>
 </tr>
+<?php endforeach; ?>
 </tbody>
 </table>
 </div>
 <!-- Pagination -->
 <div class="flex items-center justify-between mt-xl pb-xl">
-<p class="font-body-sm text-secondary">Showing <span class="font-bold text-on-surface">1-10</span> of <span class="font-bold text-on-surface">2,845</span> customers</p>
+<p class="font-body-sm text-secondary">Showing <span class="font-bold text-on-surface"><?php echo $totalRows ? ($offset + 1) : 0; ?>-<?php echo min($offset + $perPage, $totalRows); ?></span> of <span class="font-bold text-on-surface"><?php echo number_format($totalRows); ?></span> customers</p>
 <div class="flex items-center gap-sm">
-<button class="p-md border border-outline-variant rounded-lg text-secondary hover:bg-surface-container-high transition-colors disabled:opacity-30" disabled="">
+<a href="<?php echo qs(['page' => max(1, $page - 1)]); ?>" class="p-md border border-outline-variant rounded-lg text-secondary hover:bg-surface-container-high transition-colors <?php echo $page <= 1 ? 'pointer-events-none opacity-30' : ''; ?>">
 <span class="material-symbols-outlined">chevron_left</span>
-</button>
-<button class="w-10 h-10 flex items-center justify-center bg-primary text-on-primary rounded-lg font-label-md">1</button>
-<button class="w-10 h-10 flex items-center justify-center text-secondary hover:bg-surface-container-high rounded-lg font-label-md transition-colors">2</button>
-<button class="w-10 h-10 flex items-center justify-center text-secondary hover:bg-surface-container-high rounded-lg font-label-md transition-colors">3</button>
-<span class="text-secondary px-sm">...</span>
-<button class="w-10 h-10 flex items-center justify-center text-secondary hover:bg-surface-container-high rounded-lg font-label-md transition-colors">285</button>
-<button class="p-md border border-outline-variant rounded-lg text-secondary hover:bg-surface-container-high transition-colors">
+</a>
+<?php
+$start = max(1, $page - 2);
+$end   = min($totalPages, $page + 2);
+if ($start > 1) echo '<button class="w-10 h-10 flex items-center justify-center text-secondary hover:bg-surface-container-high rounded-lg font-label-md transition-colors" disabled>…</button>';
+for ($p = $start; $p <= $end; $p++): ?>
+<a href="<?php echo qs(['page' => $p]); ?>" class="w-10 h-10 flex items-center justify-center <?php echo $p === $page ? 'bg-primary text-on-primary' : 'text-secondary hover:bg-surface-container-high'; ?> rounded-lg font-label-md transition-colors"><?php echo $p; ?></a>
+<?php endfor;
+if ($end < $totalPages) echo '<span class="text-secondary px-sm">...</span><a href="' . qs(['page' => $totalPages]) . '" class="w-10 h-10 flex items-center justify-center text-secondary hover:bg-surface-container-high rounded-lg font-label-md transition-colors">' . $totalPages . '</a>';
+?>
+<a href="<?php echo qs(['page' => min($totalPages, $page + 1)]); ?>" class="p-md border border-outline-variant rounded-lg text-secondary hover:bg-surface-container-high transition-colors <?php echo $page >= $totalPages ? 'pointer-events-none opacity-30' : ''; ?>">
 <span class="material-symbols-outlined">chevron_right</span>
-</button>
+</a>
 </div>
 </div>
 </div>
@@ -333,66 +581,136 @@
 <div class="flex-1 p-xl grid grid-cols-3 gap-xl overflow-y-auto custom-scrollbar">
 <div class="space-y-lg">
 <div class="flex items-center gap-lg">
-<div class="w-24 h-24 rounded-xl bg-surface-container-highest border-2 border-primary-fixed-dim overflow-hidden">
-<img class="w-full h-full object-cover" data-alt="Close up portrait for a profile detail view of a business customer. Clean lighting, high resolution, professional corporate aesthetic with light blue brand colors." src="https://lh3.googleusercontent.com/aida-public/AB6AXuDBYB8svITZDvepFkz38qFC2_SGvobYQRIhb0PFmX98EKjmibOZzINWx7ZuMeYJDqOEV4z3twbLNrZMy1bTijMHm872zdJJDBEJMwt3p0CvHamEp0-ysenGF_K5gbV1hFeag-7_jvW3KiXtc9GfjC12vqG21YjjoO53EBVWFWzkKhB5Ec1L1DDB0yQVsg5jl2bEPq2G7WHI9VxHE71b2nzom78AJMSbIhn3_hYK98hKFmnxQYpANv7YsK4EPcazGngyY7_IDkl54zs"/>
+<div class="w-24 h-24 rounded-xl bg-surface-container-highest border-2 border-primary-fixed-dim overflow-hidden flex items-center justify-center text-headline-md font-headline-md text-primary" id="panel-avatar">
 </div>
 <div>
-<h4 class="font-headline-sm text-on-surface">Sarah Jenkins</h4>
-<p class="text-secondary font-label-md">Verified Member since 2023</p>
-<span class="inline-block mt-sm px-md py-xs bg-tertiary-fixed/20 text-on-tertiary-fixed-variant rounded-full font-label-sm">Premium Tier</span>
+<h4 class="font-headline-sm text-on-surface" id="panel-name"></h4>
+<p class="text-secondary font-label-md" id="panel-since"></p>
+<span class="inline-block mt-sm px-md py-xs bg-tertiary-fixed/20 text-on-tertiary-fixed-variant rounded-full font-label-sm" id="panel-status-badge"></span>
 </div>
 </div>
 <div class="bg-surface-container-low p-md rounded-lg space-y-sm">
 <p class="font-label-sm text-secondary uppercase">Personal Information</p>
-<p class="font-body-sm text-on-surface flex justify-between"><span>Email:</span> <span class="font-bold">s.jenkins@example.com</span></p>
-<p class="font-body-sm text-on-surface flex justify-between"><span>Phone:</span> <span class="font-bold">+1 (555) 019-2348</span></p>
-<p class="font-body-sm text-on-surface flex justify-between"><span>Location:</span> <span class="font-bold">New York, NY</span></p>
+<p class="font-body-sm text-on-surface flex justify-between"><span>Email:</span> <span class="font-bold" id="panel-email"></span></p>
+<p class="font-body-sm text-on-surface flex justify-between"><span>Phone:</span> <span class="font-bold" id="panel-phone"></span></p>
+<p class="font-body-sm text-on-surface flex justify-between"><span>Customer ID:</span> <span class="font-bold" id="panel-id"></span></p>
 </div>
 </div>
 <div class="space-y-lg">
 <p class="font-label-md text-secondary uppercase tracking-widest border-b border-outline-variant pb-xs">Recent Activity</p>
-<div class="space-y-md">
-<div class="flex gap-md">
-<span class="material-symbols-outlined text-primary">directions_car</span>
-<div>
-<p class="font-label-md text-on-surface">Tesla Model 3 Rental</p>
-<p class="font-label-sm text-secondary">Completed • Jan 12 - Jan 15</p>
-</div>
-</div>
-<div class="flex gap-md">
-<span class="material-symbols-outlined text-primary">directions_car</span>
-<div>
-<p class="font-label-md text-on-surface">BMW X5 Rental</p>
-<p class="font-label-sm text-secondary">Completed • Dec 20 - Dec 24</p>
-</div>
-</div>
-</div>
-<div class="bg-secondary-fixed/30 p-md rounded-lg">
-<p class="font-label-md text-on-secondary-fixed mb-xs">Total Lifetime Spend</p>
-<p class="font-headline-md text-primary">$4,280.50</p>
+<div class="space-y-md" id="panel-bookings">
 </div>
 </div>
 <div class="space-y-lg">
 <p class="font-label-md text-secondary uppercase tracking-widest border-b border-outline-variant pb-xs">Account Settings</p>
 <div class="space-y-sm">
-<button class="w-full flex items-center justify-between p-md border border-outline-variant rounded-lg hover:bg-surface-container-high transition-colors">
+<button type="button" id="panel-edit-btn" class="w-full flex items-center justify-between p-md border border-outline-variant rounded-lg hover:bg-surface-container-high transition-colors">
 <span class="flex items-center gap-sm font-label-md text-on-surface"><span class="material-symbols-outlined text-secondary">edit</span> Edit Profile</span>
 <span class="material-symbols-outlined text-sm text-outline">chevron_right</span>
 </button>
-<button class="w-full flex items-center justify-between p-md border border-outline-variant rounded-lg hover:bg-surface-container-high transition-colors">
+<button type="button" id="panel-bookings-btn" class="w-full flex items-center justify-between p-md border border-outline-variant rounded-lg hover:bg-surface-container-high transition-colors">
 <span class="flex items-center gap-sm font-label-md text-on-surface"><span class="material-symbols-outlined text-secondary">history</span> View All Bookings</span>
 <span class="material-symbols-outlined text-sm text-outline">chevron_right</span>
 </button>
-<button class="w-full flex items-center justify-between p-md border border-error-container rounded-lg bg-error-container/10 hover:bg-error-container transition-colors group">
-<span class="flex items-center gap-sm font-label-md text-error"><span class="material-symbols-outlined">block</span> Block Account</span>
+<button class="w-full flex items-center justify-between p-md border border-error-container rounded-lg bg-error-container/10 hover:bg-error-container transition-colors group" id="panel-block-btn">
+<span class="flex items-center gap-sm font-label-md text-error"><span class="material-symbols-outlined">block</span> <span id="panel-block-label">Block Account</span></span>
 <span class="material-symbols-outlined text-sm text-error">chevron_right</span>
 </button>
+</div>
+<div class="bg-secondary-fixed/30 p-md rounded-lg">
+<p class="font-label-md text-on-secondary-fixed mb-xs">Total Lifetime Spend</p>
+<p class="font-headline-md text-primary" id="panel-spend"></p>
 </div>
 </div>
 </div>
 </div>
 </main>
 </div>
+
+<!-- Add Customer Modal -->
+<div id="addCustomerOverlay" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-md">
+<div class="bg-surface-container-lowest rounded-xl shadow-lg w-full max-w-md">
+<div class="flex items-center justify-between p-xl border-b border-outline-variant">
+<h3 class="font-headline-sm text-headline-sm text-on-surface">Add New Customer</h3>
+<button type="button" onclick="closeAddCustomerModal()" class="text-secondary hover:text-error">
+<span class="material-symbols-outlined">close</span>
+</button>
+</div>
+<form method="POST" class="p-xl space-y-md">
+<input type="hidden" name="action" value="add_customer">
+<div>
+<label class="font-label-md text-label-md text-secondary block mb-xs">Full Name</label>
+<input type="text" name="user_name" required class="w-full px-md py-sm border border-outline-variant rounded-lg font-body-md text-body-md focus:outline-none focus:ring-2 focus:ring-primary/20">
+</div>
+<div>
+<label class="font-label-md text-label-md text-secondary block mb-xs">Email</label>
+<input type="email" name="email" required class="w-full px-md py-sm border border-outline-variant rounded-lg font-body-md text-body-md focus:outline-none focus:ring-2 focus:ring-primary/20">
+</div>
+<div>
+<label class="font-label-md text-label-md text-secondary block mb-xs">Phone</label>
+<input type="tel" name="phone" class="w-full px-md py-sm border border-outline-variant rounded-lg font-body-md text-body-md focus:outline-none focus:ring-2 focus:ring-primary/20">
+</div>
+<div>
+<label class="font-label-md text-label-md text-secondary block mb-xs">Temporary Password</label>
+<input type="password" name="password" required minlength="6" class="w-full px-md py-sm border border-outline-variant rounded-lg font-body-md text-body-md focus:outline-none focus:ring-2 focus:ring-primary/20">
+</div>
+<div class="flex justify-end gap-md pt-md">
+<button type="button" onclick="closeAddCustomerModal()" class="px-lg py-md border border-outline-variant rounded-lg font-label-md text-label-md">Cancel</button>
+<button type="submit" class="px-lg py-md bg-primary text-on-primary rounded-lg font-label-md text-label-md">Save Customer</button>
+</div>
+</form>
+</div>
+</div>
+
+<!-- Edit Profile Modal -->
+<div id="editCustomerOverlay" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-md">
+<div class="bg-surface-container-lowest rounded-xl shadow-lg w-full max-w-md">
+<div class="flex items-center justify-between p-xl border-b border-outline-variant">
+<h3 class="font-headline-sm text-headline-sm text-on-surface">Edit Customer Profile</h3>
+<button type="button" onclick="closeEditCustomerModal()" class="text-secondary hover:text-error">
+<span class="material-symbols-outlined">close</span>
+</button>
+</div>
+<form method="POST" class="p-xl space-y-md">
+<input type="hidden" name="action" value="edit_customer">
+<input type="hidden" name="user_id" id="edit-user-id">
+<div>
+<label class="font-label-md text-label-md text-secondary block mb-xs">Full Name</label>
+<input type="text" name="user_name" id="edit-user-name" required class="w-full px-md py-sm border border-outline-variant rounded-lg font-body-md text-body-md focus:outline-none focus:ring-2 focus:ring-primary/20">
+</div>
+<div>
+<label class="font-label-md text-label-md text-secondary block mb-xs">Email</label>
+<input type="email" name="email" id="edit-user-email" required class="w-full px-md py-sm border border-outline-variant rounded-lg font-body-md text-body-md focus:outline-none focus:ring-2 focus:ring-primary/20">
+</div>
+<div>
+<label class="font-label-md text-label-md text-secondary block mb-xs">Phone</label>
+<input type="tel" name="phone" id="edit-user-phone" class="w-full px-md py-sm border border-outline-variant rounded-lg font-body-md text-body-md focus:outline-none focus:ring-2 focus:ring-primary/20">
+</div>
+<div>
+<label class="font-label-md text-label-md text-secondary block mb-xs">New Password <span class="text-outline">(leave blank to keep current)</span></label>
+<input type="password" name="password" minlength="6" class="w-full px-md py-sm border border-outline-variant rounded-lg font-body-md text-body-md focus:outline-none focus:ring-2 focus:ring-primary/20">
+</div>
+<div class="flex justify-end gap-md pt-md">
+<button type="button" onclick="closeEditCustomerModal()" class="px-lg py-md border border-outline-variant rounded-lg font-label-md text-label-md">Cancel</button>
+<button type="submit" class="px-lg py-md bg-primary text-on-primary rounded-lg font-label-md text-label-md">Save Changes</button>
+</div>
+</form>
+</div>
+</div>
+
+<!-- View All Bookings Modal -->
+<div id="allBookingsOverlay" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-md">
+<div class="bg-surface-container-lowest rounded-xl shadow-lg w-full max-w-lg max-h-[80vh] flex flex-col">
+<div class="flex items-center justify-between p-xl border-b border-outline-variant">
+<h3 class="font-headline-sm text-headline-sm text-on-surface">Booking History — <span id="allBookings-name"></span></h3>
+<button type="button" onclick="closeAllBookingsModal()" class="text-secondary hover:text-error">
+<span class="material-symbols-outlined">close</span>
+</button>
+</div>
+<div class="p-xl space-y-md overflow-y-auto custom-scrollbar" id="allBookings-list"></div>
+</div>
+</div>
+
 <!-- Micro-interactions Script -->
 <script>
         function togglePanel() {
@@ -400,20 +718,116 @@
             panel.classList.toggle('translate-y-full');
         }
 
-        // Add event listeners to "View Details" buttons
-        document.querySelectorAll('button[title="View Details"]').forEach(btn => {
-            btn.addEventListener('click', () => {
-                togglePanel();
-            });
-        });
+        let currentPanelUser = null;
+
+        function openDetails(u) {
+            currentPanelUser = u;
+            document.getElementById('panel-avatar').textContent = u.name.split(' ').slice(0,2).map(w => w[0]).join('').toUpperCase();
+            document.getElementById('panel-name').textContent = u.name;
+            document.getElementById('panel-since').textContent = 'Member since ' + u.joined;
+            document.getElementById('panel-email').textContent = u.email;
+            document.getElementById('panel-phone').textContent = u.phone || '—';
+            document.getElementById('panel-id').textContent = 'DE-' + String(u.id).padStart(4, '0');
+            document.getElementById('panel-spend').textContent = '₹' + u.spend;
+
+            const badge = document.getElementById('panel-status-badge');
+            badge.textContent = u.status === 'Blocked' ? 'Blocked' : 'Active Member';
+            badge.className = u.status === 'Blocked'
+                ? 'inline-block mt-sm px-md py-xs bg-error-container text-on-error-container rounded-full font-label-sm'
+                : 'inline-block mt-sm px-md py-xs bg-tertiary-fixed/20 text-on-tertiary-fixed-variant rounded-full font-label-sm';
+
+            const blockLabel = document.getElementById('panel-block-label');
+            blockLabel.textContent = u.status === 'Blocked' ? 'Unblock Account' : 'Block Account';
+            const blockBtn = document.getElementById('panel-block-btn');
+            blockBtn.onclick = function () {
+                window.location = (u.status === 'Blocked' ? '?unblock=' : '?block=') + u.id;
+            };
+
+            const list = document.getElementById('panel-bookings');
+            list.innerHTML = '';
+            if (u.bookings.length === 0) {
+                list.innerHTML = '<p class="font-body-sm text-secondary">No bookings yet.</p>';
+            } else {
+                u.bookings.slice(0, 3).forEach(b => {
+                    const row = document.createElement('div');
+                    row.className = 'flex gap-md';
+                    row.innerHTML = `<span class="material-symbols-outlined text-primary">directions_car</span>
+                        <div>
+                            <p class="font-label-md text-on-surface">${b.car}</p>
+                            <p class="font-label-sm text-secondary">${b.status} • ${b.range}</p>
+                        </div>`;
+                    list.appendChild(row);
+                });
+            }
+
+            document.getElementById('detail-panel').classList.remove('translate-y-full');
+        }
+
+        // ---- Edit Profile ----
+        function openEditCustomerModal() {
+            if (!currentPanelUser) return;
+            document.getElementById('edit-user-id').value = currentPanelUser.id;
+            document.getElementById('edit-user-name').value = currentPanelUser.name;
+            document.getElementById('edit-user-email').value = currentPanelUser.email;
+            document.getElementById('edit-user-phone').value = currentPanelUser.phone === '—' ? '' : (currentPanelUser.phone || '');
+            document.getElementById('editCustomerOverlay').classList.remove('hidden');
+        }
+        function closeEditCustomerModal() {
+            document.getElementById('editCustomerOverlay').classList.add('hidden');
+        }
+        document.getElementById('panel-edit-btn').addEventListener('click', openEditCustomerModal);
+
+        // ---- View All Bookings ----
+        function openAllBookingsModal() {
+            if (!currentPanelUser) return;
+            document.getElementById('allBookings-name').textContent = currentPanelUser.name;
+            const list = document.getElementById('allBookings-list');
+            list.innerHTML = '';
+            if (!currentPanelUser.bookings || currentPanelUser.bookings.length === 0) {
+                list.innerHTML = '<p class="font-body-sm text-secondary">No bookings yet.</p>';
+            } else {
+                currentPanelUser.bookings.forEach(b => {
+                    const row = document.createElement('div');
+                    row.className = 'flex items-center justify-between gap-md p-md border border-outline-variant rounded-lg';
+                    row.innerHTML = `
+                        <div class="flex items-center gap-md">
+                            <span class="material-symbols-outlined text-primary">directions_car</span>
+                            <div>
+                                <p class="font-label-md text-on-surface">${b.car}</p>
+                                <p class="font-label-sm text-secondary">${b.range} • Booked ${b.booked_on}</p>
+                            </div>
+                        </div>
+                        <div class="text-right">
+                            <p class="font-label-md text-on-surface">₹${b.amount}</p>
+                            <p class="font-label-sm text-secondary">${b.status}</p>
+                        </div>`;
+                    list.appendChild(row);
+                });
+            }
+            document.getElementById('allBookingsOverlay').classList.remove('hidden');
+        }
+        function closeAllBookingsModal() {
+            document.getElementById('allBookingsOverlay').classList.add('hidden');
+        }
+        document.getElementById('panel-bookings-btn').addEventListener('click', openAllBookingsModal);
+
+        function openAddCustomerModal() {
+            document.getElementById('addCustomerOverlay').classList.remove('hidden');
+        }
+        function closeAddCustomerModal() {
+            document.getElementById('addCustomerOverlay').classList.add('hidden');
+        }
 
         // Search Bar Focus Effect
-        const searchInput = document.querySelector('input[type="text"]');
-        searchInput.addEventListener('focus', () => {
-            searchInput.parentElement.classList.add('ring-2', 'ring-primary/20');
-        });
-        searchInput.addEventListener('blur', () => {
-            searchInput.parentElement.classList.remove('ring-2', 'ring-primary/20');
-        });
+        const searchInput = document.querySelector('input[type="text"][name="q"]');
+        if (searchInput) {
+            searchInput.addEventListener('focus', () => {
+                searchInput.parentElement.classList.add('ring-2', 'ring-primary/20');
+            });
+            searchInput.addEventListener('blur', () => {
+                searchInput.parentElement.classList.remove('ring-2', 'ring-primary/20');
+            });
+        }
     </script>
 </body></html>
+<?php $conn->close(); ?>

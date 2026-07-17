@@ -8,7 +8,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     $password = trim($_POST['password']);
 
     // Check Email
-    $stmt = $conn->prepare("SELECT id, user_name, email, password, role FROM users WHERE email = ?");
+    $stmt = $conn->prepare("SELECT id, user_name, email, password, role, status FROM users WHERE email = ?");
     $stmt->bind_param("s", $email);
     $stmt->execute();
 
@@ -21,13 +21,17 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         // Verify Password
         if (password_verify($password, $user['password'])) {
 
-            // Store Session
-            $_SESSION['user_id'] = $user['id'];
-            $_SESSION['user_name'] = $user['user_name'];
-            $_SESSION['email'] = $user['email'];
-            $_SESSION['role'] = $user['role'];
+            // Blocked accounts may not log in, regardless of correct credentials
+            if (($user['status'] ?? 'Active') === 'Blocked') {
+                echo "<script>
+                        alert('Your account has been blocked. Please contact support for assistance.');
+                        window.location='login.php';
+                      </script>";
+                $stmt->close();
+                $conn->close();
+                exit();
+            }
 
-            // Redirect
             // Store Session
             $_SESSION['user_id'] = $user['id'];
             $_SESSION['user_name'] = $user['user_name'];

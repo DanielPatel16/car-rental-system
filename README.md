@@ -316,4 +316,4 @@ Made with ❤️ using PHP & MySQL.
 
 ## ⭐ If you like this project
 
-Please consider giving it a **Star ⭐** on GitHub to support the project.
+Please consider giving it a **Star ⭐** on GitHub to support the project.33
