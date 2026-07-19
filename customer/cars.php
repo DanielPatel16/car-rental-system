@@ -15,6 +15,18 @@ $priceMax             = (isset($_GET['price_max']) && $_GET['price_max'] !== '')
 $sort                 = $_GET['sort'] ?? 'popularity';
 
 // ---------------------------------------------------------------
+// Price range bounds — fixed at ₹1000 to ₹100000+
+// ---------------------------------------------------------------
+$priceFloor = 1000;
+$priceCeil  = 100000;
+$priceStep  = 1000;
+
+// Clamp any incoming price_max to the valid range
+if ($priceMax !== null) {
+    $priceMax = max($priceFloor, min($priceCeil, $priceMax));
+}
+
+// ---------------------------------------------------------------
 // Build the WHERE clause safely with prepared statements
 // ---------------------------------------------------------------
 $where  = ["status = 'Available'"];
@@ -45,7 +57,9 @@ if ($selectedSeats !== '') {
         $types   .= "i";
     }
 }
-if ($priceMax !== null) {
+// Only filter by price when the user has actually moved the slider
+// away from the full ceiling (otherwise "no filter" = ceiling anyway)
+if ($priceMax !== null && $priceMax < $priceCeil) {
     $where[]  = "price_per_day <= ?";
     $params[] = $priceMax;
     $types   .= "d";
@@ -101,6 +115,7 @@ function qs($extra) {
 }
 include "../includes/header.php";
 ?>
+<br />
 <!-- Main Content Layout -->
 <main class="flex-grow pt-16 flex flex-col lg:flex-row max-w-max-width mx-auto w-full px-margin-desktop gap-gutter py-lg">
 <!-- Sidebar Filter -->
@@ -124,15 +139,22 @@ include "../includes/header.php";
 <?php endif; ?>
 </div>
 </div>
-<!-- Price Range -->
+<!-- Price Range (fixed: ₹1000 to ₹100000+) -->
 <div class="mb-lg">
 <label class="text-label-md font-label-md text-on-surface-variant block mb-sm">Price Range (Daily)</label>
-<input type="range" name="price_max" value="<?php echo htmlspecialchars($priceMax ?? 1000); ?>" onchange="this.form.submit()" class="w-full h-2 bg-secondary-container rounded-lg appearance-none cursor-pointer accent-primary" max="1000" min="50" step="10"/>
+<input type="range" name="price_max" id="priceMaxSlider" value="<?php echo htmlspecialchars($priceMax ?? $priceCeil); ?>" onchange="this.form.submit()" oninput="document.getElementById('priceMaxLabel').textContent = formatPrice(this.value);" class="w-full h-2 bg-secondary-container rounded-lg appearance-none cursor-pointer accent-primary" max="<?php echo (int) $priceCeil; ?>" min="<?php echo (int) $priceFloor; ?>" step="<?php echo (int) $priceStep; ?>"/>
 <div class="flex justify-between mt-sm text-label-sm font-label-sm text-on-surface-variant">
-<span class="">₹50</span>
-<span class="">₹<?php echo htmlspecialchars($priceMax ?? 1000); ?><?php echo ($priceMax === null || $priceMax >= 1000) ? '+' : ''; ?></span>
+<span class="">₹<?php echo number_format($priceFloor); ?></span>
+<span id="priceMaxLabel">₹<?php echo number_format($priceMax ?? $priceCeil); ?><?php echo ($priceMax === null || $priceMax >= $priceCeil) ? '+' : ''; ?></span>
 </div>
 </div>
+<script>
+function formatPrice(v) {
+    v = parseInt(v, 10);
+    var suffix = v >= <?php echo (int) $priceCeil; ?> ? '+' : '';
+    return '₹' + v.toLocaleString('en-IN') + suffix;
+}
+</script>
 <!-- Fuel Type -->
 <div class="mb-lg">
 <label class="text-label-md font-label-md text-on-surface-variant block mb-sm">Fuel Type</label>

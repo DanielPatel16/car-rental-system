@@ -20,7 +20,7 @@ if (isset($_GET['cancel'])) {
     $stmt->execute();
     $stmt->close();
     $conn->query("UPDATE bookings SET payment_status = 'Refunded' WHERE id = $bid AND user_id = $user_id AND payment_status = 'Paid'");
-    header("Location: my_bookings.php");
+    header("Location: booking_history.php");
     exit();
 }
 
@@ -81,7 +81,7 @@ function mqs($extra) {
     $qs = $_GET;
     unset($qs['cancel']);
     foreach ($extra as $k => $v) { $qs[$k] = $v; }
-    return 'my_bookings.php?' . http_build_query($qs);
+    return 'booking_history.php?' . http_build_query($qs);
 }
 include "../includes/header.php";
 ?>

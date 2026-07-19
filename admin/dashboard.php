@@ -1,3 +1,151 @@
+<?php
+session_start();
+include "../includes/db.php";
+
+// ---- Auth guard: only logged-in admins may access this page ----
+if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
+    header("Location: ../login.php");
+    exit();
+}
+
+// ---------------------------------------------------------------
+// Handle booking status actions from the Recent Bookings table
+// (?action=confirm|cancel|complete&id=X) — same behaviour as bookings.php
+// ---------------------------------------------------------------
+if (isset($_GET['action'], $_GET['id'])) {
+    $id  = (int) $_GET['id'];
+    $map = ['confirm' => 'Confirmed', 'cancel' => 'Cancelled', 'complete' => 'Completed'];
+
+    if (isset($map[$_GET['action']])) {
+        $newStatus = $map[$_GET['action']];
+        $stmt = $conn->prepare("UPDATE bookings SET booking_status = ? WHERE id = ?");
+        $stmt->bind_param("si", $newStatus, $id);
+        $stmt->execute();
+        $stmt->close();
+
+        if ($newStatus === 'Cancelled') {
+            $conn->query("UPDATE bookings SET payment_status = 'Refunded' WHERE id = $id AND payment_status = 'Paid'");
+        }
+    }
+
+    header("Location: dashboard.php");
+    exit();
+}
+
+/* ------------------------------------------------------------------
+   DASHBOARD DATA — pulled from: bookings, cars, categories, payments, users
+   ------------------------------------------------------------------ */
+
+// ---- Total Revenue (all-time, from paid bookings) ----
+$totalRevenue = (float) ($conn->query("SELECT COALESCE(SUM(total_amount),0) AS total FROM bookings WHERE payment_status = 'Paid'")->fetch_assoc()['total'] ?? 0);
+
+// ---- Active Rentals (cars currently marked Rented) ----
+$activeRentals = (int) $conn->query("SELECT COUNT(*) AS cnt FROM cars WHERE status = 'Rented'")->fetch_assoc()['cnt'];
+
+// ---- Pending Bookings ----
+$pendingBookings = (int) $conn->query("SELECT COUNT(*) AS cnt FROM bookings WHERE booking_status = 'Pending'")->fetch_assoc()['cnt'];
+
+// ---- Total Customers (users with role = user) ----
+$totalCustomers = (int) $conn->query("SELECT COUNT(*) AS cnt FROM users WHERE role = 'user'")->fetch_assoc()['cnt'];
+
+// ---- New customers who joined this calendar month ----
+$newCustomersThisMonth = (int) $conn->query(
+    "SELECT COUNT(*) AS cnt FROM users
+     WHERE role = 'user' AND MONTH(created_at) = MONTH(CURDATE()) AND YEAR(created_at) = YEAR(CURDATE())"
+)->fetch_assoc()['cnt'];
+
+// ---- Fleet Status breakdown (Available / Rented / Maintenance) ----
+$fleetStatus = ['Available' => 0, 'Rented' => 0, 'Maintenance' => 0];
+$res = $conn->query("SELECT status, COUNT(*) AS cnt FROM cars GROUP BY status");
+while ($row = $res->fetch_assoc()) {
+    $fleetStatus[$row['status']] = (int) $row['cnt'];
+}
+$totalFleet = array_sum($fleetStatus);
+$occupancyRate  = $totalFleet ? round(($activeRentals / $totalFleet) * 100) : 0;
+$pctRented      = $totalFleet ? round(($fleetStatus['Rented'] / $totalFleet) * 100, 1)      : 0;
+$pctAvailable   = $totalFleet ? round(($fleetStatus['Available'] / $totalFleet) * 100, 1)   : 0;
+$pctMaintenance = $totalFleet ? round(($fleetStatus['Maintenance'] / $totalFleet) * 100, 1) : 0;
+
+// ---- Revenue Growth Chart: last 6 months of paid bookings ----
+$monthlyRevenue = [];
+for ($i = 5; $i >= 0; $i--) {
+    $monthStart = date('Y-m-01', strtotime("-$i months"));
+    $monthEnd   = date('Y-m-t', strtotime("-$i months"));
+    $label      = strtoupper(date('M', strtotime("-$i months")));
+    $stmt = $conn->prepare("SELECT COALESCE(SUM(total_amount),0) AS total FROM bookings WHERE payment_status = 'Paid' AND created_at BETWEEN ? AND ?");
+    $endDateTime = $monthEnd . ' 23:59:59';
+    $stmt->bind_param("ss", $monthStart, $endDateTime);
+    $stmt->execute();
+    $total = (float) $stmt->get_result()->fetch_assoc()['total'];
+    $monthlyRevenue[] = ['label' => $label, 'total' => $total];
+    $stmt->close();
+}
+$maxMonthly   = max(1, max(array_column($monthlyRevenue, 'total')));
+$chartCeiling = ceil(($maxMonthly * 1.15) / 25000) * 25000;
+$chartCeiling = $chartCeiling > 0 ? $chartCeiling : 25000;
+
+// Month-over-month revenue trend (current month vs previous month)
+$currentMonthRevenue  = $monthlyRevenue[5]['total'];
+$previousMonthRevenue = $monthlyRevenue[4]['total'];
+if ($previousMonthRevenue > 0) {
+    $revenueTrendPct = round((($currentMonthRevenue - $previousMonthRevenue) / $previousMonthRevenue) * 100, 1);
+} else {
+    $revenueTrendPct = $currentMonthRevenue > 0 ? 100 : 0;
+}
+
+// ---- Recent Bookings (joined with users + cars) ----
+$recentBookings = [];
+$sql = "SELECT b.id, b.pickup_date, b.return_date, b.total_amount, b.booking_status,
+               u.user_name, c.brand, c.model
+        FROM bookings b
+        JOIN users u ON b.user_id = u.id
+        JOIN cars  c ON b.car_id  = c.id
+        ORDER BY b.created_at DESC
+        LIMIT 5";
+$res = $conn->query($sql);
+while ($row = $res->fetch_assoc()) {
+    $recentBookings[] = $row;
+}
+
+// ---- Maintenance Alerts (cars currently in Maintenance) ----
+$maintenanceCars = [];
+$res = $conn->query("SELECT brand, model, registration_number FROM cars WHERE status = 'Maintenance' ORDER BY created_at DESC LIMIT 3");
+while ($row = $res->fetch_assoc()) {
+    $maintenanceCars[] = $row;
+}
+
+// ---- Recently joined customers ----
+$recentCustomers = [];
+$res = $conn->query("SELECT user_name, email, created_at FROM users WHERE role = 'user' ORDER BY created_at DESC LIMIT 4");
+while ($row = $res->fetch_assoc()) {
+    $recentCustomers[] = $row;
+}
+
+// Helper: initials from a name, e.g. "James Smith" -> "JS"
+function initials_from_name(string $name): string {
+    $parts   = preg_split('/\s+/', trim($name));
+    $letters = array_map(fn($p) => mb_strtoupper(mb_substr($p, 0, 1)), array_slice($parts, 0, 2));
+    return implode('', $letters) ?: '?';
+}
+
+// Helper: relative "time ago" for the recent-signups list
+function time_ago(string $datetime): string {
+    $diff = time() - strtotime($datetime);
+    if ($diff < 60) return 'Just now';
+    if ($diff < 3600) return floor($diff / 60) . 'm ago';
+    if ($diff < 86400) return floor($diff / 3600) . 'h ago';
+    if ($diff < 2592000) return floor($diff / 86400) . 'd ago';
+    return date('M d, Y', strtotime($datetime));
+}
+
+// Status badge classes — same mapping used on bookings.php for visual consistency
+$statusBadge = [
+    'Confirmed' => 'bg-tertiary-container/10 text-tertiary-container border border-tertiary-container/20',
+    'Completed' => 'bg-surface-container-highest text-secondary border border-outline-variant',
+    'Pending'   => 'bg-error-container/10 text-error border border-error-container/20',
+    'Cancelled' => 'bg-surface-container-high text-secondary border border-outline-variant opacity-70 line-through',
+];
+?>
 <!DOCTYPE html><html class="light" lang="en"><head>
 <meta charset="utf-8">
 <meta content="width=device-width, initial-scale=1.0" name="viewport">
@@ -8,14 +156,13 @@
         }
         body {
             font-family: 'Inter', sans-serif;
-            background-color: #F8FAFC; /* Level 0 Background */
+            background-color: #F8FAFC;
         }
-        /* Custom scrollbar for data density */
         ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 10px; }
         ::-webkit-scrollbar-thumb:hover { background: #94A3B8; }
-        
+
         .chart-bar { transition: height 1s ease-out; }
     </style>
 </head>
@@ -28,23 +175,27 @@
 <header class="h-16 bg-surface dark:bg-surface-container border-b border-outline-variant dark:border-outline flex items-center justify-between px-4 sm:px-margin-desktop sticky top-0 z-30 shadow-sm gap-2">
 <h2 class="text-base sm:text-headline-sm font-headline-sm text-primary truncate pl-12 lg:pl-0">Dashboard Overview</h2>
 <div class="flex items-center gap-2 sm:gap-lg shrink-0">
-<div class="relative group hidden md:block">
-<input class="bg-surface-container-low border border-outline-variant rounded-full px-md py-xs pl-10 text-body-sm focus:ring-2 focus:ring-primary focus:outline-none w-48 lg:w-64 transition-all group-focus-within:w-64 lg:group-focus-within:w-80" placeholder="Search for bookings, cars..." type="text">
+<form id="dashSearchForm" method="GET" action="bookings.php" class="relative group hidden md:block">
+<input class="bg-surface-container-low border border-outline-variant rounded-full px-md py-xs pl-10 text-body-sm focus:ring-2 focus:ring-primary focus:outline-none w-48 lg:w-64 transition-all group-focus-within:w-64 lg:group-focus-within:w-80" placeholder="Search bookings by customer, car..." type="text" name="q">
 <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant opacity-60">search</span>
-</div>
-<button class="p-1 rounded-full hover:bg-surface-container-high transition-colors md:hidden">
+</form>
+<a href="bookings.php" class="p-1 rounded-full hover:bg-surface-container-high transition-colors md:hidden">
 <span class="material-symbols-outlined text-primary">search</span>
-</button>
+</a>
 <button class="relative p-xs rounded-full hover:bg-surface-container-high transition-colors">
 <span class="material-symbols-outlined text-primary">notifications</span>
+<?php if ($pendingBookings > 0): ?>
 <span class="absolute top-1 right-1 w-2 h-2 bg-error rounded-full"></span>
+<?php endif; ?>
 </button>
 <div class="flex items-center gap-sm cursor-pointer border-l border-outline-variant pl-2 sm:pl-lg">
 <div class="text-right hidden sm:block">
-<p class="text-label-md font-label-md text-on-surface">Alex Rivera</p>
-<p class="text-[10px] text-on-surface-variant font-medium">FLEET MANAGER</p>
+<p class="text-label-md font-label-md text-on-surface"><?php echo htmlspecialchars($_SESSION['user_name'] ?? 'Admin'); ?></p>
+<p class="text-[10px] text-on-surface-variant font-medium">ADMIN ACCESS</p>
 </div>
-<img class="w-10 h-10 rounded-full border border-primary object-cover" data-alt="A professional business portrait of a fleet manager in a clean, modern corporate setting. He is smiling slightly, wearing a sharp navy blazer, with a blurred high-tech car dealership background featuring bright blue lighting and sleek glass surfaces. The photo is high-resolution with soft, even lighting." src="https://lh3.googleusercontent.com/aida-public/AB6AXuAyZSIPQdHpZiKEAFST_m34UWaoaZtE8dkVKWkLogHzUl-jigYWqKOQjtPlhUqs7r5JwJ_JvQAaKIFkp0yvFzEbtC3jr2UWtx_5HbuKwAUKcRt3lSZcpiHnhplgNb1YYCEvX69DDd2_n21cmHc2lWkFWL7M1AfhEiQGSkqZXYkOmaYKQXUuQD6kBShiZImjwQVR8qUctyqz8LUKPHHSU6rESuBIl7Qs0lIb-D9-tkxTGygcxpdm6WtG3UpQ6u7U9j1GboNCIqT7XAw">
+<div class="w-10 h-10 rounded-full border border-primary bg-secondary-container flex items-center justify-center text-primary font-bold text-sm">
+<?php echo htmlspecialchars(initials_from_name($_SESSION['user_name'] ?? 'Admin')); ?>
+</div>
 </div>
 </div>
 </header>
@@ -57,13 +208,13 @@
 <div class="p-sm bg-secondary-container rounded-lg text-primary">
 <span class="material-symbols-outlined">payments</span>
 </div>
-<span class="text-tertiary font-label-sm flex items-center gap-xs">
-<span class="material-symbols-outlined text-[14px]">trending_up</span> +12.5%
+<span class="<?php echo $revenueTrendPct >= 0 ? 'text-tertiary' : 'text-error'; ?> font-label-sm flex items-center gap-xs">
+<span class="material-symbols-outlined text-[14px]"><?php echo $revenueTrendPct >= 0 ? 'trending_up' : 'trending_down'; ?></span> <?php echo ($revenueTrendPct >= 0 ? '+' : '') . $revenueTrendPct; ?>%
                         </span>
 </div>
 <p class="text-label-sm font-label-sm text-on-surface-variant mb-xs">TOTAL REVENUE</p>
-<h3 class="text-lg sm:text-headline-md font-headline-md text-on-surface">₹128,430.00</h3>
-<p class="text-[11px] text-on-surface-variant mt-xs">vs last 30 days</p>
+<h3 class="text-lg sm:text-headline-md font-headline-md text-on-surface">₹<?php echo number_format($totalRevenue, 2); ?></h3>
+<p class="text-[11px] text-on-surface-variant mt-xs">vs last month</p>
 </div>
 <!-- Active Rentals -->
 <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-3 sm:p-lg shadow-[0px_4px_6px_-1px_rgba(0,0,0,0.1)] group hover:border-primary transition-all">
@@ -72,12 +223,12 @@
 <span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">directions_car</span>
 </div>
 <span class="text-tertiary font-label-sm flex items-center gap-xs">
-<span class="material-symbols-outlined text-[14px]">trending_up</span> +4
+<?php echo $occupancyRate; ?>% occupied
                         </span>
 </div>
 <p class="text-label-sm font-label-sm text-on-surface-variant mb-xs">ACTIVE RENTALS</p>
-<h3 class="text-headline-md font-headline-md text-on-surface">42</h3>
-<p class="text-[11px] text-on-surface-variant mt-xs">84% occupancy rate</p>
+<h3 class="text-headline-md font-headline-md text-on-surface"><?php echo $activeRentals; ?></h3>
+<p class="text-[11px] text-on-surface-variant mt-xs"><?php echo $activeRentals; ?> of <?php echo $totalFleet; ?> vehicles</p>
 </div>
 <!-- Pending Bookings -->
 <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-3 sm:p-lg shadow-[0px_4px_6px_-1px_rgba(0,0,0,0.1)] group hover:border-primary transition-all">
@@ -85,13 +236,15 @@
 <div class="p-sm bg-tertiary-fixed rounded-lg text-on-tertiary-fixed-variant">
 <span class="material-symbols-outlined">pending_actions</span>
 </div>
+<?php if ($pendingBookings > 0): ?>
 <span class="text-error font-label-sm flex items-center gap-xs">
 <span class="material-symbols-outlined text-[14px]">warning</span> Action Req.
                         </span>
+<?php endif; ?>
 </div>
 <p class="text-label-sm font-label-sm text-on-surface-variant mb-xs">PENDING BOOKINGS</p>
-<h3 class="text-headline-md font-headline-md text-on-surface">15</h3>
-<p class="text-[11px] text-on-surface-variant mt-xs">Average response: 12m</p>
+<h3 class="text-headline-md font-headline-md text-on-surface"><?php echo $pendingBookings; ?></h3>
+<a href="bookings.php?status=Pending" class="text-[11px] text-primary hover:underline mt-xs inline-block">Review requests →</a>
 </div>
 <!-- Total Customers -->
 <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-3 sm:p-lg shadow-[0px_4px_6px_-1px_rgba(0,0,0,0.1)] group hover:border-primary transition-all">
@@ -99,42 +252,38 @@
 <div class="p-sm bg-surface-container-highest rounded-lg text-secondary">
 <span class="material-symbols-outlined">group</span>
 </div>
+<?php if ($newCustomersThisMonth > 0): ?>
 <span class="text-tertiary font-label-sm flex items-center gap-xs">
-<span class="material-symbols-outlined text-[14px]">trending_up</span> +1.2k
+<span class="material-symbols-outlined text-[14px]">trending_up</span> +<?php echo $newCustomersThisMonth; ?>
                         </span>
+<?php endif; ?>
 </div>
 <p class="text-label-sm font-label-sm text-on-surface-variant mb-xs">TOTAL CUSTOMERS</p>
-<h3 class="text-headline-md font-headline-md text-on-surface">2,840</h3>
+<h3 class="text-headline-md font-headline-md text-on-surface"><?php echo number_format($totalCustomers); ?></h3>
 <p class="text-[11px] text-on-surface-variant mt-xs">Lifetime members</p>
 </div>
 </section>
 <!-- Main Charts & Tables Section -->
 <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-gutter">
-<!-- Revenue Growth Chart & Fleet Status (Left/Middle Column span) -->
+<!-- Revenue Growth Chart & Recent Bookings (Left/Middle Column span) -->
 <div class="lg:col-span-2 space-y-gutter">
 <!-- Revenue Growth Chart Card -->
 <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-lg shadow-[0px_4px_6px_-1px_rgba(0,0,0,0.1)]">
 <div class="flex justify-between items-center mb-lg">
 <div>
 <h4 class="text-headline-sm font-headline-sm text-on-surface">Revenue Growth</h4>
-<p class="text-body-sm font-body-sm text-on-surface-variant">Monthly revenue overview (Current Year)</p>
+<p class="text-body-sm font-body-sm text-on-surface-variant">Monthly revenue from paid bookings</p>
 </div>
-<select class="bg-surface-container-low border border-outline-variant rounded-lg text-label-md font-label-md px-md py-xs focus:ring-primary focus:outline-none">
-<option>Last 6 Months</option>
-<option>Last Year</option>
-</select>
+<span class="bg-surface-container-low border border-outline-variant rounded-lg text-label-md font-label-md px-md py-xs text-on-surface-variant">Last 6 Months</span>
 </div>
-<!-- Visual Mockup of Chart -->
 <div class="h-48 sm:h-64 w-full flex items-end gap-md px-md pt-lg relative overflow-x-auto">
-<!-- Y-Axis Labels -->
 <div class="absolute left-0 h-full flex flex-col justify-between text-[10px] text-on-surface-variant font-bold">
-<span class="">100k</span>
-<span class="">75k</span>
-<span class="">50k</span>
-<span class="">25k</span>
+<span class=""><?php echo number_format($chartCeiling); ?></span>
+<span class=""><?php echo number_format($chartCeiling * 0.75); ?></span>
+<span class=""><?php echo number_format($chartCeiling * 0.5); ?></span>
+<span class=""><?php echo number_format($chartCeiling * 0.25); ?></span>
 <span class="">0</span>
 </div>
-<!-- Grid Lines -->
 <div class="absolute inset-0 flex flex-col justify-between py-xs pointer-events-none ml-8">
 <div class="border-t border-outline-variant border-dashed w-full h-0 opacity-40"></div>
 <div class="border-t border-outline-variant border-dashed w-full h-0 opacity-40"></div>
@@ -142,26 +291,28 @@
 <div class="border-t border-outline-variant border-dashed w-full h-0 opacity-40"></div>
 <div class="border-t border-outline-variant w-full h-0"></div>
 </div>
-<!-- Bars -->
 <div class="flex-grow ml-8 h-full flex items-end justify-between z-10">
-<div class="chart-bar w-6 sm:w-12 bg-secondary-container rounded-t-lg hover:bg-primary transition-colors cursor-pointer" style="height: 45%;"></div>
-<div class="chart-bar w-6 sm:w-12 bg-secondary-container rounded-t-lg hover:bg-primary transition-colors cursor-pointer" style="height: 60%;"></div>
-<div class="chart-bar w-6 sm:w-12 bg-secondary-container rounded-t-lg hover:bg-primary transition-colors cursor-pointer" style="height: 55%;"></div>
-<div class="chart-bar w-6 sm:w-12 bg-secondary-container rounded-t-lg hover:bg-primary transition-colors cursor-pointer" style="height: 85%;"></div>
-<div class="chart-bar w-6 sm:w-12 bg-primary rounded-t-lg transition-colors cursor-pointer" style="height: 95%;"></div>
-<div class="chart-bar w-6 sm:w-12 bg-secondary-container rounded-t-lg hover:bg-primary transition-colors cursor-pointer" style="height: 75%;"></div>
+<?php
+$lastIndex = count($monthlyRevenue) - 1;
+foreach ($monthlyRevenue as $i => $m):
+    $heightPct = max(2, round(($m['total'] / $chartCeiling) * 100));
+    $barClasses = ($i === $lastIndex) ? 'bg-primary' : 'bg-secondary-container hover:bg-primary';
+?>
+<div class="chart-bar w-6 sm:w-12 <?php echo $barClasses; ?> rounded-t-lg transition-colors cursor-pointer" style="height: <?php echo $heightPct; ?>%;" title="<?php echo $m['label'] . ': ₹' . number_format($m['total'], 2); ?>"></div>
+<?php endforeach; ?>
 </div>
 </div>
-<!-- X-Axis Labels -->
 <div class="flex justify-between ml-16 mt-sm text-[10px] text-on-surface-variant font-bold">
-<span class="">JAN</span><span class="">FEB</span><span class="">MAR</span><span class="">APR</span><span class="">MAY</span><span class="">JUN</span>
+<?php foreach ($monthlyRevenue as $m): ?>
+<span class=""><?php echo $m['label']; ?></span>
+<?php endforeach; ?>
 </div>
 </div>
 <!-- Recent Bookings Table Card -->
 <div class="bg-surface-container-lowest border border-outline-variant rounded-xl shadow-[0px_4px_6px_-1px_rgba(0,0,0,0.1)] overflow-hidden">
 <div class="p-lg border-b border-outline-variant flex justify-between items-center">
 <h4 class="text-headline-sm font-headline-sm text-on-surface">Recent Bookings</h4>
-<button class="text-primary font-label-md hover:underline">View All</button>
+<a href="bookings.php" class="text-primary font-label-md hover:underline">View All</a>
 </div>
 <div class="overflow-x-auto -mx-1 px-1">
 <table class="w-full min-w-[640px] text-left">
@@ -176,69 +327,41 @@
 </tr>
 </thead>
 <tbody class="divide-y divide-outline-variant/30 text-body-sm">
-<!-- Row 1 -->
+<?php if (empty($recentBookings)): ?>
+<tr>
+<td class="px-3 sm:px-lg py-6 text-center text-on-surface-variant" colspan="6">No bookings yet.</td>
+</tr>
+<?php else: foreach ($recentBookings as $bk):
+    $badgeClass = $statusBadge[$bk['booking_status']] ?? 'bg-surface-container-high text-on-surface-variant';
+?>
 <tr class="hover:bg-primary-container/5 transition-colors cursor-default">
 <td class="px-3 sm:px-lg py-2 sm:py-md">
 <div class="flex items-center gap-sm">
-<div class="w-8 h-8 rounded-full bg-secondary-container text-primary flex items-center justify-center font-bold text-xs">JS</div>
-<span class="font-medium">James Smith</span>
+<div class="w-8 h-8 rounded-full bg-secondary-container text-primary flex items-center justify-center font-bold text-xs"><?php echo htmlspecialchars(initials_from_name($bk['user_name'])); ?></div>
+<span class="font-medium"><?php echo htmlspecialchars($bk['user_name']); ?></span>
 </div>
 </td>
-<td class="px-3 sm:px-lg py-2 sm:py-md">Tesla Model 3</td>
-<td class="px-3 sm:px-lg py-2 sm:py-md">Oct 24 - Oct 27</td>
-<td class="px-3 sm:px-lg py-2 sm:py-md font-semibold">₹540.00</td>
+<td class="px-3 sm:px-lg py-2 sm:py-md"><?php echo htmlspecialchars($bk['brand'] . ' ' . $bk['model']); ?></td>
+<td class="px-3 sm:px-lg py-2 sm:py-md"><?php echo date('M d', strtotime($bk['pickup_date'])) . ' - ' . date('M d', strtotime($bk['return_date'])); ?></td>
+<td class="px-3 sm:px-lg py-2 sm:py-md font-semibold">₹<?php echo number_format($bk['total_amount'], 2); ?></td>
 <td class="px-3 sm:px-lg py-2 sm:py-md">
-<span class="px-sm py-1 bg-tertiary-fixed text-on-tertiary-fixed-variant rounded-full text-[10px] font-bold">CONFIRMED</span>
+<span class="px-sm py-1 <?php echo $badgeClass; ?> rounded-full text-[10px] font-bold"><?php echo strtoupper($bk['booking_status']); ?></span>
 </td>
 <td class="px-3 sm:px-lg py-2 sm:py-md text-right">
 <div class="flex justify-end gap-xs">
-<button class="p-1 hover:text-primary transition-colors"><span class="material-symbols-outlined text-[20px]">check_circle</span></button>
-<button class="p-1 hover:text-error transition-colors"><span class="material-symbols-outlined text-[20px]">cancel</span></button>
+<?php if ($bk['booking_status'] === 'Pending'): ?>
+<a href="dashboard.php?action=confirm&id=<?php echo (int) $bk['id']; ?>" title="Confirm" class="p-1 hover:text-primary transition-colors"><span class="material-symbols-outlined text-[20px]">check_circle</span></a>
+<a href="dashboard.php?action=cancel&id=<?php echo (int) $bk['id']; ?>" onclick="return confirm('Cancel this booking?')" title="Cancel" class="p-1 hover:text-error transition-colors"><span class="material-symbols-outlined text-[20px]">cancel</span></a>
+<?php elseif ($bk['booking_status'] === 'Confirmed'): ?>
+<a href="dashboard.php?action=complete&id=<?php echo (int) $bk['id']; ?>" title="Mark Completed" class="p-1 hover:text-primary transition-colors"><span class="material-symbols-outlined text-[20px]">task_alt</span></a>
+<a href="dashboard.php?action=cancel&id=<?php echo (int) $bk['id']; ?>" onclick="return confirm('Cancel this booking?')" title="Cancel" class="p-1 hover:text-error transition-colors"><span class="material-symbols-outlined text-[20px]">cancel</span></a>
+<?php else: ?>
+<span class="text-on-surface-variant text-[11px] italic">No actions</span>
+<?php endif; ?>
 </div>
 </td>
 </tr>
-<!-- Row 2 -->
-<tr class="hover:bg-primary-container/5 transition-colors cursor-default">
-<td class="px-3 sm:px-lg py-2 sm:py-md">
-<div class="flex items-center gap-sm">
-<div class="w-8 h-8 rounded-full bg-surface-container-highest text-on-surface-variant flex items-center justify-center font-bold text-xs">EM</div>
-<span class="font-medium">Elena Martinez</span>
-</div>
-</td>
-<td class="px-3 sm:px-lg py-2 sm:py-md">BMW X5</td>
-<td class="px-3 sm:px-lg py-2 sm:py-md">Oct 25 - Oct 29</td>
-<td class="px-3 sm:px-lg py-2 sm:py-md font-semibold">₹890.00</td>
-<td class="px-3 sm:px-lg py-2 sm:py-md">
-<span class="px-sm py-1 bg-secondary-container text-on-secondary-container rounded-full text-[10px] font-bold">PENDING</span>
-</td>
-<td class="px-3 sm:px-lg py-2 sm:py-md text-right">
-<div class="flex justify-end gap-xs">
-<button class="p-1 hover:text-primary transition-colors"><span class="material-symbols-outlined text-[20px]">check_circle</span></button>
-<button class="p-1 hover:text-error transition-colors"><span class="material-symbols-outlined text-[20px]">cancel</span></button>
-</div>
-</td>
-</tr>
-<!-- Row 3 -->
-<tr class="hover:bg-primary-container/5 transition-colors cursor-default">
-<td class="px-3 sm:px-lg py-2 sm:py-md">
-<div class="flex items-center gap-sm">
-<div class="w-8 h-8 rounded-full bg-primary-fixed text-on-primary-fixed flex items-center justify-center font-bold text-xs">RH</div>
-<span class="font-medium">Robert Huang</span>
-</div>
-</td>
-<td class="px-3 sm:px-lg py-2 sm:py-md">Mercedes C-Class</td>
-<td class="px-3 sm:px-lg py-2 sm:py-md">Oct 26 - Oct 26</td>
-<td class="px-3 sm:px-lg py-2 sm:py-md font-semibold">₹150.00</td>
-<td class="px-3 sm:px-lg py-2 sm:py-md">
-<span class="px-sm py-1 bg-tertiary-fixed text-on-tertiary-fixed-variant rounded-full text-[10px] font-bold">CONFIRMED</span>
-</td>
-<td class="px-3 sm:px-lg py-2 sm:py-md text-right">
-<div class="flex justify-end gap-xs">
-<button class="p-1 hover:text-primary transition-colors"><span class="material-symbols-outlined text-[20px]">check_circle</span></button>
-<button class="p-1 hover:text-error transition-colors"><span class="material-symbols-outlined text-[20px]">cancel</span></button>
-</div>
-</td>
-</tr>
+<?php endforeach; endif; ?>
 </tbody>
 </table>
 </div>
@@ -250,14 +373,14 @@
 <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-lg shadow-[0px_4px_6px_-1px_rgba(0,0,0,0.1)]">
 <h4 class="text-headline-sm font-headline-sm text-on-surface mb-md">Fleet Status</h4>
 <div class="relative h-36 w-36 sm:h-48 sm:w-48 mx-auto mb-lg">
-<!-- SVG Donut Chart Mockup -->
 <svg class="w-full h-full transform -rotate-90" viewBox="0 0 36 36">
 <circle class="stroke-surface-container-high" cx="18" cy="18" fill="none" r="16" stroke-width="3"></circle>
-<circle class="stroke-primary" cx="18" cy="18" fill="none" r="16" stroke-dasharray="75, 100" stroke-width="3"></circle>
-<circle class="stroke-tertiary-fixed-dim" cx="18" cy="18" fill="none" r="16" stroke-dasharray="25, 100" stroke-dashoffset="-75" stroke-width="3"></circle>
+<circle class="stroke-primary" cx="18" cy="18" fill="none" r="16" stroke-dasharray="<?php echo $pctRented; ?>, 100" stroke-width="3"></circle>
+<circle class="stroke-tertiary-fixed-dim" cx="18" cy="18" fill="none" r="16" stroke-dasharray="<?php echo $pctAvailable; ?>, 100" stroke-dashoffset="-<?php echo $pctRented; ?>" stroke-width="3"></circle>
+<circle class="stroke-error" cx="18" cy="18" fill="none" r="16" stroke-dasharray="<?php echo $pctMaintenance; ?>, 100" stroke-dashoffset="-<?php echo $pctRented + $pctAvailable; ?>" stroke-width="3"></circle>
 </svg>
 <div class="absolute inset-0 flex flex-col items-center justify-center">
-<span class="text-headline-md font-headline-md text-on-surface">150</span>
+<span class="text-headline-md font-headline-md text-on-surface"><?php echo $totalFleet; ?></span>
 <span class="text-[10px] font-bold text-on-surface-variant uppercase">Total Fleet</span>
 </div>
 </div>
@@ -267,103 +390,76 @@
 <span class="w-3 h-3 rounded-full bg-primary"></span>
 <span class="">Rented</span>
 </div>
-<span class="font-bold">112</span>
+<span class="font-bold"><?php echo $fleetStatus['Rented']; ?></span>
 </div>
 <div class="flex items-center justify-between text-body-sm">
 <div class="flex items-center gap-sm">
 <span class="w-3 h-3 rounded-full bg-tertiary-fixed-dim"></span>
 <span class="">Available</span>
 </div>
-<span class="font-bold">28</span>
+<span class="font-bold"><?php echo $fleetStatus['Available']; ?></span>
 </div>
 <div class="flex items-center justify-between text-body-sm">
 <div class="flex items-center gap-sm">
 <span class="w-3 h-3 rounded-full bg-error"></span>
 <span class="">Maintenance</span>
 </div>
-<span class="font-bold">10</span>
+<span class="font-bold"><?php echo $fleetStatus['Maintenance']; ?></span>
 </div>
 </div>
-<button class="w-full mt-lg py-sm border border-primary text-primary font-label-md rounded-lg hover:bg-primary-container/5 transition-colors">
+<a href="cars.php" class="w-full mt-lg py-sm border border-primary text-primary font-label-md rounded-lg hover:bg-primary-container/5 transition-colors flex items-center justify-center">
                             Manage Fleet Details
-                        </button>
+                        </a>
 </div>
 <!-- Maintenance Alerts -->
 <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-lg shadow-[0px_4px_6px_-1px_rgba(0,0,0,0.1)]">
-<h4 class="text-headline-sm font-headline-sm text-on-surface mb-md">Maintenance Alerts</h4>
+<div class="flex justify-between items-center mb-md">
+<h4 class="text-headline-sm font-headline-sm text-on-surface">Maintenance Alerts</h4>
+<?php if (!empty($maintenanceCars)): ?>
+<a href="cars.php?status=Maintenance" class="text-primary font-label-sm hover:underline">View All</a>
+<?php endif; ?>
+</div>
 <div class="space-y-md">
-<div class="flex gap-md">
-<div class="text-error mt-1">
-<span class="material-symbols-outlined">warning</span>
+<?php if (empty($maintenanceCars)): ?>
+<p class="text-body-sm text-on-surface-variant">No vehicles currently in maintenance.</p>
+<?php else: foreach ($maintenanceCars as $idx => $mc): ?>
+<div class="flex gap-md<?php echo $idx > 0 ? ' border-t border-outline-variant/30 pt-md' : ''; ?>">
+<div class="<?php echo $idx === 0 ? 'text-error' : 'text-secondary'; ?> mt-1">
+<span class="material-symbols-outlined"><?php echo $idx === 0 ? 'warning' : 'build'; ?></span>
 </div>
 <div>
-<p class="text-label-md font-label-md text-on-surface">Oil Change Required</p>
-<p class="text-body-sm text-on-surface-variant">Toyota Camry (Plate: AB-1234)</p>
-<p class="text-[11px] text-error font-bold mt-xs">URGENT</p>
+<p class="text-label-md font-label-md text-on-surface">Vehicle In Maintenance</p>
+<p class="text-body-sm text-on-surface-variant"><?php echo htmlspecialchars($mc['brand'] . ' ' . $mc['model']); ?> (Plate: <?php echo htmlspecialchars($mc['registration_number']); ?>)</p>
 </div>
 </div>
-<div class="flex gap-md border-t border-outline-variant/30 pt-md">
-<div class="text-secondary mt-1">
-<span class="material-symbols-outlined">build</span>
-</div>
-<div>
-<p class="text-label-md font-label-md text-on-surface">Scheduled Service</p>
-<p class="text-body-sm text-on-surface-variant">Ford Mustang (Plate: GT-5000)</p>
-<p class="text-[11px] text-on-surface-variant font-bold mt-xs">IN 2 DAYS</p>
+<?php endforeach; endif; ?>
 </div>
 </div>
+<!-- Recently Joined Customers -->
+<div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-lg shadow-[0px_4px_6px_-1px_rgba(0,0,0,0.1)]">
+<div class="flex justify-between items-center mb-md">
+<h4 class="text-headline-sm font-headline-sm text-on-surface">Recently Joined</h4>
+<a href="users.php" class="text-primary font-label-sm hover:underline">View All</a>
 </div>
+<div class="space-y-md">
+<?php if (empty($recentCustomers)): ?>
+<p class="text-body-sm text-on-surface-variant">No customers yet.</p>
+<?php else: foreach ($recentCustomers as $cust): ?>
+<div class="flex items-center gap-sm">
+<div class="w-8 h-8 rounded-full bg-surface-container-highest text-on-surface-variant flex items-center justify-center font-bold text-xs shrink-0"><?php echo htmlspecialchars(initials_from_name($cust['user_name'])); ?></div>
+<div class="min-w-0 flex-1">
+<p class="text-label-md font-label-md text-on-surface truncate"><?php echo htmlspecialchars($cust['user_name']); ?></p>
+<p class="text-[11px] text-on-surface-variant truncate"><?php echo htmlspecialchars($cust['email']); ?></p>
 </div>
-<!-- Upcoming Inspections Map/Location Mockup -->
-<div class="bg-surface-container-lowest border border-outline-variant rounded-xl overflow-hidden shadow-[0px_4px_6px_-1px_rgba(0,0,0,0.1)]">
-<div class="h-32 w-full" data-location="Chicago">
-<div class="w-full h-full bg-surface-container-high flex items-center justify-center text-on-surface-variant/40">
-<span class="material-symbols-outlined text-[48px]">map</span>
+<span class="text-[11px] text-on-surface-variant shrink-0"><?php echo time_ago($cust['created_at']); ?></span>
 </div>
-</div>
-<div class="p-md">
-<p class="text-label-sm font-label-sm text-on-surface-variant">ACTIVE RETURN HUB</p>
-<p class="text-body-md font-bold text-on-surface">Chicago O'Hare Terminal 1</p>
-<p class="text-body-sm text-on-surface-variant">4 Returns expected next hour</p>
+<?php endforeach; endif; ?>
 </div>
 </div>
 </div>
 </div>
 </div>
-<!-- Footer -->
-<footer class="w-full mt-auto bg-surface-container-highest dark:bg-inverse-surface border-t border-outline-variant dark:border-outline">
-<div class="w-full py-8 sm:py-xl px-4 sm:px-margin-desktop grid grid-cols-1 md:grid-cols-2 gap-4 items-center max-w-max-width mx-auto text-center md:text-left">
-<div>
-<h5 class="text-headline-sm font-headline-sm font-bold text-on-surface dark:text-inverse-on-surface">DriveEase</h5>
-<p class="text-body-sm font-body-sm text-on-surface-variant dark:text-surface-variant">© 2024 DriveEase Car Rental Systems. All rights reserved.</p>
-</div>
-<div class="flex flex-wrap md:justify-end gap-lg mt-md md:mt-0">
-<a class="text-label-sm font-label-sm text-on-surface-variant dark:text-surface-variant hover:text-on-surface transition-colors" href="#">Privacy Policy</a>
-<a class="text-label-sm font-label-sm text-on-surface-variant dark:text-surface-variant hover:text-on-surface transition-colors" href="#">Terms of Service</a>
-<a class="text-label-sm font-label-sm text-on-surface-variant dark:text-surface-variant hover:text-on-surface transition-colors" href="#">Contact Support</a>
-</div>
-</div>
-</footer>
 </main>
-<!-- Mobile Nav Bar (only visible on small screens) -->
-<nav class="fixed bottom-0 left-0 right-0 h-16 bg-surface border-t border-outline-variant flex lg:hidden items-center justify-around z-50">
-<a class="flex flex-col items-center text-primary" href="#">
-<span class="material-symbols-outlined">dashboard</span>
-<span class="text-[10px] font-bold">Dashboard</span>
-</a>
-<a class="flex flex-col items-center text-on-surface-variant" href="#">
-<span class="material-symbols-outlined">directions_car</span>
-<span class="text-[10px] font-bold">Fleet</span>
-</a>
-<a class="flex flex-col items-center text-on-surface-variant" href="#">
-<span class="material-symbols-outlined">calendar_today</span>
-<span class="text-[10px] font-bold">Bookings</span>
-</a>
-<a class="flex flex-col items-center text-on-surface-variant" href="#">
-<span class="material-symbols-outlined">person</span>
-<span class="text-[10px] font-bold">Profile</span>
-</a>
-</nav>
 <script>
         // Simple animation trigger for chart bars
         window.addEventListener('DOMContentLoaded', () => {
@@ -377,6 +473,5 @@
             });
         });
     </script>
-
-
 </body></html>
+<?php $conn->close(); ?>

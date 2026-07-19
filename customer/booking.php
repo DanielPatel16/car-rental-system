@@ -306,7 +306,7 @@ $imgSrc = $car['image'] ? "../uploads/cars/" . htmlspecialchars($car['image']) :
 <a class="font-headline-md text-headline-md font-bold text-primary dark:text-primary-fixed" href="../index.php">DriveEase</a>
 <nav class="hidden md:flex gap-lg h-16 items-center">
 <a class="text-on-surface-variant dark:text-secondary-fixed-dim hover:text-primary dark:hover:text-primary-fixed transition-colors font-body-md text-body-md cursor-pointer active:scale-95 transition-transform flex items-center h-full" href="cars.php">Fleet</a>
-<a class="text-primary dark:text-primary-fixed border-b-2 border-primary dark:border-primary-fixed pb-1 hover:text-primary dark:hover:text-primary-fixed transition-colors font-body-md text-body-md cursor-pointer active:scale-95 transition-transform flex items-center h-[calc(100%-2px)] mt-[2px]" href="my_bookings.php">My Bookings</a>
+<a class="text-primary dark:text-primary-fixed border-b-2 border-primary dark:border-primary-fixed pb-1 hover:text-primary dark:hover:text-primary-fixed transition-colors font-body-md text-body-md cursor-pointer active:scale-95 transition-transform flex items-center h-[calc(100%-2px)] mt-[2px]" href="booking_history.php">My Bookings</a>
 <a class="text-on-surface-variant dark:text-secondary-fixed-dim hover:text-primary dark:hover:text-primary-fixed transition-colors font-body-md text-body-md cursor-pointer active:scale-95 transition-transform flex items-center h-full" href="#">Support</a>
 </nav>
 </div>

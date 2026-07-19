@@ -4,22 +4,47 @@ $base      = $base      ?? '';
 $pageTitle = $pageTitle ?? 'DriveEase';
 $activeNav = $activeNav ?? '';
 
+// Auto-detect which nav item should be "active" from the current filename,
+// so a page doesn't break the highlight just because it forgot to set
+// $activeNav manually before including this file. A page can still set
+// $activeNav itself beforehand to override this.
+if ($activeNav === '') {
+    $__current_file = basename($_SERVER['PHP_SELF']);
+    $__auto_nav_map = [
+        'dashboard.php'       => 'home',
+        'index.php'           => 'home',
+        'cars.php'            => 'cars',
+        'howitworks.php'      => 'how',
+        'aboutus.php'         => 'about',
+        'contactus.php'       => 'contact',
+        'booking_history.php' => 'history',
+    ];
+    $activeNav = $__auto_nav_map[$__current_file] ?? '';
+}
+
 // Small helper to print the "active" vs "inactive" nav link classes (desktop)
 // The active link gets a sliding underline (::after) driven by the nav-link-active
 // class + the <style> rules below, so the indicator animates in rather than
 // just appearing.
 function navClass($key, $activeNav) {
     return $key === $activeNav
-        ? 'nav-link nav-link-active relative text-primary pb-1 text-label-md font-label-md'
-        : 'nav-link relative text-on-surface-variant hover:text-primary transition-colors duration-200 pb-1 text-label-md font-label-md';
+        ? 'nav-link nav-link-active'
+        : 'nav-link';
 }
 
 // Same idea, styled for the stacked mobile menu (left accent bar instead of underline)
 function navClassMobile($key, $activeNav) {
     return $key === $activeNav
-        ? 'mobile-nav-link mobile-nav-link-active flex items-center px-md py-sm rounded-lg bg-primary-container/10 text-primary text-label-md font-label-md border-l-2 border-primary'
-        : 'mobile-nav-link flex items-center px-md py-sm rounded-lg text-on-surface-variant hover:bg-surface-container-high hover:text-primary transition-colors duration-200 text-label-md font-label-md border-l-2 border-transparent';
+        ? 'mobile-nav-link mobile-nav-link-active'
+        : 'mobile-nav-link';
 }
+
+// Home always points to dashboard.php — this project has no separate public
+// index.php, dashboard.php IS the home page. (See the auth-guard fix in
+// dashboard.php itself: it must not force a login redirect, since Home needs
+// to be reachable from public pages like cars.php/howitworks.php/aboutus.php/contactus.php
+// even for guests who aren't logged in.)
+$homeHref = $base . 'dashboard.php';
 ?>
 <!DOCTYPE html>
 <html class="light" lang="en">
@@ -134,10 +159,89 @@ function navClassMobile($key, $activeNav) {
         font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
         vertical-align: middle;
     }
-    body { font-family: 'Inter', sans-serif; }
+
+    body {
+        font-family: 'Inter', sans-serif;
+        background-color: #faf8ff;
+        color: #131b2e;
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+    }
+
+    /* ---------- Header shell ---------- */
+    #site-header {
+        position: fixed;
+        top: 0;
+        width: 100%;
+        z-index: 50;
+        background-color: #faf8ff;
+        border-bottom: 1px solid #c4c5d5;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    }
+
+    .dj-header-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        width: 100%;
+        padding: 0 16px;
+        max-width: 1440px;
+        margin: 0 auto;
+        height: 64px;
+    }
+
+    @media (min-width: 768px) {
+        .dj-header-row {
+            padding: 0 32px;
+        }
+    }
+
+    .dj-brand {
+        font-size: 24px;
+        line-height: 32px;
+        letter-spacing: -0.01em;
+        font-weight: 700;
+        color: #00288e;
+        text-decoration: none;
+        flex-shrink: 0;
+    }
+
+    .dj-nav {
+        display: none;
+        align-items: center;
+        gap: 32px;
+    }
+
+    @media (min-width: 768px) {
+        .dj-nav {
+            display: flex;
+        }
+    }
+
+    .dj-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    @media (min-width: 768px) {
+        .dj-actions {
+            gap: 16px;
+        }
+    }
 
     /* ---------- Desktop nav: hover + active-state animation ---------- */
     .nav-link {
+        position: relative;
+        display: inline-block;
+        color: #444653;
+        font-size: 14px;
+        line-height: 16px;
+        letter-spacing: 0.05em;
+        font-weight: 600;
+        padding-bottom: 4px;
+        text-decoration: none;
         transition: color 0.25s ease, transform 0.25s ease;
     }
     .nav-link::after {
@@ -147,14 +251,14 @@ function navClassMobile($key, $activeNav) {
         bottom: -1px;
         height: 2px;
         width: 100%;
-        background: linear-gradient(90deg, theme('colors.primary'), theme('colors.tertiary'));
+        background: linear-gradient(90deg, #00288e, #003d27);
         border-radius: 9999px;
         transform: translateX(-50%) scaleX(0);
         transform-origin: center;
         transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
     }
     .nav-link:hover {
-        color: theme('colors.primary');
+        color: #00288e;
         transform: translateY(-2px);
     }
     .nav-link:hover::after,
@@ -162,13 +266,14 @@ function navClassMobile($key, $activeNav) {
         transform: translateX(-50%) scaleX(1);
     }
     .nav-link-active {
+        color: #00288e;
         transform: translateY(-1px);
         font-weight: 700;
     }
 
     /* Active page badge: a soft pulse the first moment the page loads, so it's unmistakable */
     @keyframes activePulse {
-        0%   { background-color: theme('colors.primary-fixed'); }
+        0%   { background-color: #dde1ff; }
         100% { background-color: transparent; }
     }
     .nav-link-active {
@@ -178,27 +283,74 @@ function navClassMobile($key, $activeNav) {
         animation: activePulse 1.2s ease-out;
     }
 
-    /* ---------- Mobile menu open/close ---------- */
-    #mobile-nav-panel {
-        max-height: 0;
-        opacity: 0;
-        overflow: hidden;
-        transition: max-height 0.35s ease, opacity 0.25s ease;
+    /* ---------- Account button + avatar ---------- */
+    #account-btn {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        padding: 4px 8px;
+        border-radius: 9999px;
+        background: none;
+        border: none;
+        cursor: pointer;
+        transition: background-color 0.15s ease, transform 0.15s ease;
     }
-    #mobile-nav-panel.open {
-        max-height: 32rem;
-        opacity: 1;
+    #account-btn:hover {
+        background-color: #e2e7ff;
     }
-    .hamburger-line {
-        transition: transform 0.3s ease, opacity 0.3s ease, y 0.3s ease;
-        transform-origin: center;
+    #account-btn:active {
+        transform: scale(0.95);
     }
-    #hamburger-btn[aria-expanded="true"] .line-top { transform: translateY(6px) rotate(45deg); }
-    #hamburger-btn[aria-expanded="true"] .line-mid { opacity: 0; }
-    #hamburger-btn[aria-expanded="true"] .line-bot { transform: translateY(-6px) rotate(-45deg); }
+
+    .dj-avatar {
+        width: 32px;
+        height: 32px;
+        border-radius: 9999px;
+        background-color: #dde1ff;
+        color: #00288e;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 14px;
+        font-weight: 600;
+        letter-spacing: 0.05em;
+    }
+
+    .dj-account-name {
+        display: none;
+        font-size: 14px;
+        font-weight: 600;
+        letter-spacing: 0.05em;
+        color: #131b2e;
+    }
+    @media (min-width: 1024px) {
+        .dj-account-name {
+            display: inline;
+        }
+    }
+
+    .dj-account-chevron {
+        display: none;
+        color: #757684;
+        font-size: 16px;
+    }
+    @media (min-width: 768px) {
+        .dj-account-chevron {
+            display: inline;
+        }
+    }
 
     /* ---------- Account dropdown ---------- */
     #account-menu {
+        position: absolute;
+        right: 0;
+        top: calc(100% + 8px);
+        width: 192px;
+        background-color: #ffffff;
+        border: 1px solid #c4c5d5;
+        border-radius: 8px;
+        box-shadow: 0px 10px 15px -3px rgba(0, 40, 142, 0.12);
+        padding: 4px 0;
         opacity: 0;
         transform: translateY(-6px);
         pointer-events: none;
@@ -210,11 +362,168 @@ function navClassMobile($key, $activeNav) {
         pointer-events: auto;
     }
 
+    .dj-account-link {
+        display: block;
+        padding: 8px 16px;
+        font-size: 14px;
+        color: #444653;
+        text-decoration: none;
+        transition: background-color 0.2s ease, color 0.2s ease;
+    }
+    .dj-account-link:hover {
+        background-color: #e2e7ff;
+        color: #00288e;
+    }
+
+    .dj-account-link-danger {
+        color: #ba1a1a;
+    }
+    .dj-account-link-danger:hover {
+        background-color: #ffdad6;
+        color: #ba1a1a;
+    }
+
+    /* ---------- Guest links ---------- */
+    .dj-link-login {
+        display: none;
+        color: #444653;
+        font-size: 14px;
+        font-weight: 600;
+        letter-spacing: 0.05em;
+        padding: 4px 16px;
+        text-decoration: none;
+        transition: color 0.2s ease;
+    }
+    @media (min-width: 640px) {
+        .dj-link-login {
+            display: inline-block;
+        }
+    }
+    .dj-link-login:hover {
+        color: #00288e;
+    }
+
+    .dj-btn-register {
+        background-color: #00288e;
+        color: #ffffff;
+        padding: 4px 16px;
+        border-radius: 8px;
+        font-size: 14px;
+        font-weight: 600;
+        letter-spacing: 0.05em;
+        text-decoration: none;
+        transition: background-color 0.2s ease, transform 0.2s ease;
+    }
+    @media (min-width: 768px) {
+        .dj-btn-register {
+            padding: 4px 24px;
+        }
+    }
+    .dj-btn-register:hover {
+        background-color: #1e40af;
+    }
+    .dj-btn-register:active {
+        transform: scale(0.95);
+    }
+
+    /* ---------- Mobile menu open/close ---------- */
+    #hamburger-btn {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        width: 36px;
+        height: 36px;
+        border-radius: 8px;
+        background: none;
+        border: none;
+        cursor: pointer;
+        transition: background-color 0.2s ease;
+    }
+    #hamburger-btn:hover {
+        background-color: #e2e7ff;
+    }
+    @media (min-width: 768px) {
+        #hamburger-btn {
+            display: none;
+        }
+    }
+
+    #mobile-nav-panel {
+        background-color: #faf8ff;
+        border-top: 1px solid #c4c5d5;
+        padding: 0 16px;
+        max-height: 0;
+        opacity: 0;
+        overflow: hidden;
+        transition: max-height 0.35s ease, opacity 0.25s ease;
+    }
+    #mobile-nav-panel.open {
+        max-height: 32rem;
+        opacity: 1;
+    }
+    @media (min-width: 768px) {
+        #mobile-nav-panel {
+            display: none;
+        }
+    }
+
+    .dj-mobile-nav-inner {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        padding: 16px 0;
+    }
+
+    .dj-mobile-login-only {
+        display: flex;
+    }
+    @media (min-width: 640px) {
+        .dj-mobile-login-only {
+            display: none;
+        }
+    }
+
+    .hamburger-line {
+        display: block;
+        width: 20px;
+        height: 2px;
+        background-color: #131b2e;
+        border-radius: 9999px;
+        margin-bottom: 4px;
+        transition: transform 0.3s ease, opacity 0.3s ease, y 0.3s ease;
+        transform-origin: center;
+    }
+    .line-bot {
+        margin-bottom: 0;
+    }
+    #hamburger-btn[aria-expanded="true"] .line-top { transform: translateY(6px) rotate(45deg); }
+    #hamburger-btn[aria-expanded="true"] .line-mid { opacity: 0; }
+    #hamburger-btn[aria-expanded="true"] .line-bot { transform: translateY(-6px) rotate(-45deg); }
+
+    /* ---------- Mobile nav links (left accent bar) ---------- */
     .mobile-nav-link {
+        display: flex;
+        align-items: center;
+        padding: 8px 16px;
+        border-radius: 8px;
+        color: #444653;
+        font-size: 14px;
+        font-weight: 600;
+        letter-spacing: 0.05em;
+        text-decoration: none;
+        border-left: 2px solid transparent;
         transition: background-color 0.2s ease, color 0.2s ease, transform 0.2s ease, border-color 0.2s ease;
     }
     .mobile-nav-link:hover {
+        background-color: #e2e7ff;
+        color: #00288e;
         transform: translateX(4px);
+    }
+    .mobile-nav-link-active {
+        background-color: rgba(30, 64, 175, 0.1);
+        color: #00288e;
+        border-left-color: #00288e;
     }
 
     @media (prefers-reduced-motion: reduce) {
@@ -226,15 +535,15 @@ function navClassMobile($key, $activeNav) {
 </style>
 <?php if (isset($extraHead)) echo $extraHead; // let a page inject a couple of extra <style>/<link> lines if it truly needs them ?>
 </head>
-<body class="bg-background text-on-background min-h-screen flex flex-col">
+<body>
 
-<header id="site-header" class="fixed top-0 w-full z-50 bg-surface border-b border-outline-variant shadow-sm">
-<div class="flex justify-between items-center w-full px-margin-mobile md:px-margin-desktop max-w-max-width mx-auto h-16">
+<header id="site-header">
+<div class="dj-header-row">
 
-<a href="<?php echo $base; ?>index.php" class="text-headline-md font-headline-md font-bold text-primary shrink-0">DriveEase</a>
+<a href="<?php echo $base; ?>index.php" class="dj-brand">DriveEase</a>
 
-<nav class="hidden md:flex items-center gap-xl">
-<a class="<?php echo navClass('home', $activeNav); ?>" href="<?php echo $base; ?>dashboard.php" <?php echo $activeNav === 'home' ? 'aria-current="page"' : ''; ?>>Home</a>
+<nav class="dj-nav">
+<a class="<?php echo navClass('home', $activeNav); ?>" href="<?php echo $homeHref; ?>" <?php echo $activeNav === 'home' ? 'aria-current="page"' : ''; ?>>Home</a>
 <a class="<?php echo navClass('cars', $activeNav); ?>" href="<?php echo $base; ?>cars.php" <?php echo $activeNav === 'cars' ? 'aria-current="page"' : ''; ?>>Cars</a>
 <a class="<?php echo navClass('how', $activeNav); ?>" href="<?php echo $base; ?>howitworks.php" <?php echo $activeNav === 'how' ? 'aria-current="page"' : ''; ?>>How it Works</a>
 <a class="<?php echo navClass('about', $activeNav); ?>" href="<?php echo $base; ?>aboutus.php" <?php echo $activeNav === 'about' ? 'aria-current="page"' : ''; ?>>About</a>
@@ -244,45 +553,45 @@ function navClassMobile($key, $activeNav) {
 <?php endif; ?>
 </nav>
 
-<div class="flex items-center gap-sm md:gap-md">
+<div class="dj-actions">
 <?php if (isset($_SESSION['user_id'])): ?>
     <div class="relative">
-        <button id="account-btn" aria-haspopup="true" aria-expanded="false" class="flex items-center gap-xs px-sm py-1 rounded-full hover:bg-surface-container-high active:scale-95 transition-all duration-150">
-            <span class="w-8 h-8 rounded-full bg-primary-fixed text-primary flex items-center justify-center font-label-md text-label-md">
+        <button id="account-btn" aria-haspopup="true" aria-expanded="false">
+            <span class="dj-avatar">
                 <?php echo strtoupper(substr($_SESSION['user_name'] ?? 'U', 0, 1)); ?>
             </span>
-            <span class="hidden lg:inline text-label-md font-label-md text-on-surface"><?php echo htmlspecialchars($_SESSION['user_name'] ?? 'Account'); ?></span>
-            <span class="material-symbols-outlined hidden md:inline text-outline text-sm">expand_more</span>
+            <span class="dj-account-name"><?php echo htmlspecialchars($_SESSION['user_name'] ?? 'Account'); ?></span>
+            <span class="material-symbols-outlined dj-account-chevron">expand_more</span>
         </button>
-        <div id="account-menu" class="absolute right-0 mt-2 w-48 bg-surface-container-lowest border border-outline-variant rounded-lg shadow-lg py-xs">
+        <div id="account-menu">
             <?php if (($_SESSION['role'] ?? '') === 'admin'): ?>
-            <a href="<?php echo $base; ?>admin/dashboard.php" class="block px-md py-sm text-body-sm text-on-surface-variant hover:bg-surface-container-high hover:text-primary transition-colors">Admin Dashboard</a>
+            <a href="<?php echo $base; ?>admin/dashboard.php" class="dj-account-link">Admin Dashboard</a>
             <?php else: ?>
-            <a href="<?php echo $base; ?>profile.php" class="block px-md py-sm text-body-sm text-on-surface-variant hover:bg-surface-container-high hover:text-primary transition-colors">My Profile</a>
-            <a href="<?php echo $base; ?>booking_history.php" class="block px-md py-sm text-body-sm text-on-surface-variant hover:bg-surface-container-high hover:text-primary transition-colors">My Bookings</a>
+            <a href="<?php echo $base; ?>profile.php" class="dj-account-link">My Profile</a>
+            <a href="<?php echo $base; ?>booking_history.php" class="dj-account-link">My Bookings</a>
             <?php endif; ?>
-            <a href="<?php echo $base; ?>../logout.php" class="block px-md py-sm text-body-sm text-error hover:bg-error-container transition-colors">Logout</a>
+            <a href="<?php echo $base; ?>../logout.php" class="dj-account-link dj-account-link-danger">Logout</a>
         </div>
     </div>
 <?php else: ?>
-    <a href="<?php echo $base; ?>login.php" class="hidden sm:inline-block text-on-surface-variant hover:text-primary transition-colors duration-200 text-label-md font-label-md px-md py-xs">Login</a>
-    <a href="<?php echo $base; ?>register.php" class="bg-primary text-on-primary px-md md:px-lg py-xs rounded-lg font-label-md text-label-md hover:bg-primary-container active:scale-95 transition-all duration-200">Register</a>
+    <a href="<?php echo $base; ?>login.php" class="dj-link-login">Login</a>
+    <a href="<?php echo $base; ?>register.php" class="dj-btn-register">Register</a>
 <?php endif; ?>
 
 <!-- Hamburger: shown on mobile & tablet, hidden once the full nav fits (md and up) -->
-<button id="hamburger-btn" aria-expanded="false" aria-controls="mobile-nav-panel" aria-label="Toggle navigation menu" class="md:hidden flex flex-col justify-center items-center w-9 h-9 rounded-lg hover:bg-surface-container-high transition-colors">
-    <span class="hamburger-line line-top block w-5 h-0.5 bg-on-surface rounded-full mb-1"></span>
-    <span class="hamburger-line line-mid block w-5 h-0.5 bg-on-surface rounded-full mb-1"></span>
-    <span class="hamburger-line line-bot block w-5 h-0.5 bg-on-surface rounded-full"></span>
+<button id="hamburger-btn" aria-expanded="false" aria-controls="mobile-nav-panel" aria-label="Toggle navigation menu">
+    <span class="hamburger-line line-top"></span>
+    <span class="hamburger-line line-mid"></span>
+    <span class="hamburger-line line-bot"></span>
 </button>
 </div>
 
 </div>
 
 <!-- Mobile / tablet nav panel -->
-<nav id="mobile-nav-panel" class="md:hidden bg-surface border-t border-outline-variant px-margin-mobile">
-<div class="flex flex-col gap-xs py-md">
-<a class="<?php echo navClassMobile('home', $activeNav); ?>" href="<?php echo $base; ?>dashboard.php" <?php echo $activeNav === 'home' ? 'aria-current="page"' : ''; ?>>Home</a>
+<nav id="mobile-nav-panel">
+<div class="dj-mobile-nav-inner">
+<a class="<?php echo navClassMobile('home', $activeNav); ?>" href="<?php echo $homeHref; ?>" <?php echo $activeNav === 'home' ? 'aria-current="page"' : ''; ?>>Home</a>
 <a class="<?php echo navClassMobile('cars', $activeNav); ?>" href="<?php echo $base; ?>cars.php" <?php echo $activeNav === 'cars' ? 'aria-current="page"' : ''; ?>>Cars</a>
 <a class="<?php echo navClassMobile('how', $activeNav); ?>" href="<?php echo $base; ?>howitworks.php" <?php echo $activeNav === 'how' ? 'aria-current="page"' : ''; ?>>How it Works</a>
 <a class="<?php echo navClassMobile('about', $activeNav); ?>" href="<?php echo $base; ?>aboutus.php" <?php echo $activeNav === 'about' ? 'aria-current="page"' : ''; ?>>About</a>
@@ -291,7 +600,7 @@ function navClassMobile($key, $activeNav) {
 <a class="<?php echo navClassMobile('history', $activeNav); ?>" href="<?php echo $base; ?>booking_history.php" <?php echo $activeNav === 'history' ? 'aria-current="page"' : ''; ?>>Booking History</a>
 <?php endif; ?>
 <?php if (!isset($_SESSION['user_id'])): ?>
-<a href="<?php echo $base; ?>login.php" class="sm:hidden flex items-center px-md py-sm rounded-lg text-on-surface-variant hover:bg-surface-container-high hover:text-primary transition-colors text-label-md font-label-md border-l-2 border-transparent">Login</a>
+<a href="<?php echo $base; ?>login.php" class="mobile-nav-link dj-mobile-login-only">Login</a>
 <?php endif; ?>
 </div>
 </nav>

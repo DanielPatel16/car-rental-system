@@ -46,7 +46,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                 header("Location: admin/dashboard.php");
                 exit();
             } elseif ($user['role'] === 'user') {
-                header("Location: index.php");
+                header("Location: customer/Dashboard.php");
                 exit();
             } else {
                 // Unknown role

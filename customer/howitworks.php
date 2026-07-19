@@ -2,6 +2,7 @@
 session_start();
 include "../includes/header.php";
 ?>
+<br />
 <!-- Main Content -->
 <main class="flex-grow">
 <!-- Hero Section -->

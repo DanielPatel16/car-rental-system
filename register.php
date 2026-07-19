@@ -6,10 +6,16 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 
     $username = trim($_POST['username']);
     $email = trim($_POST['email']);
+    $phone = trim($_POST['phone']);
     $password = trim($_POST['password']);
 
     // Default Role
     $role = "user";
+
+    if (!preg_match('/^[0-9+\-\s()]{7,20}$/', $phone)) {
+        echo "<script>alert('Please enter a valid phone number.');window.location='register.php';</script>";
+        exit();
+    }
 
     // Check if email already exists
     $check = $conn->prepare("SELECT id FROM users WHERE email = ?");
@@ -26,14 +32,21 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     $hashedPassword = password_hash($password, PASSWORD_DEFAULT);
 
     // Insert User
-    $stmt = $conn->prepare("INSERT INTO users (user_name, email, password, role) VALUES (?, ?, ?, ?)");
-    $stmt->bind_param("ssss", $username, $email, $hashedPassword, $role);
+    $stmt = $conn->prepare("INSERT INTO users (user_name, email, mobile_number, password, role) VALUES (?, ?, ?, ?, ?)");
+    $stmt->bind_param("sssss", $username, $email, $phone, $hashedPassword, $role);
 
     if ($stmt->execute()) {
 
-        $_SESSION['user'] = $username;
+        // Store full session (consistent with login.php)
+        $_SESSION['user_id'] = $stmt->insert_id;
+        $_SESSION['user_name'] = $username;
+        $_SESSION['email'] = $email;
+        $_SESSION['role'] = $role;
 
-        header("Location: index.php");
+        // Prevent session fixation
+        session_regenerate_id(true);
+
+        header("Location: dashboard.php");
         exit();
 
     } else {
