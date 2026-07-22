@@ -349,7 +349,7 @@ function initials($name) {
 <div class="w-px h-6 bg-outline-variant mx-sm"></div>
 <div class="flex items-center gap-sm">
 <span class="font-label-md text-on-surface"><?php echo htmlspecialchars($_SESSION['user_name'] ?? 'Admin'); ?></span>
-<div class="w-8 h-8 rounded-full bg-primary-fixed flex items-center justify-center text-on-primary-fixed font-bold text-xs">
+<div class="w-10 h-10 rounded-full border border-outline-variant bg-secondary-container flex items-center justify-center text-primary font-bold text-sm">
                             <?php echo htmlspecialchars(initials($_SESSION['user_name'] ?? 'Admin')); ?>
                         </div>
 </div>

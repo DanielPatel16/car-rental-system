@@ -137,16 +137,18 @@ function initials_from_name(string $name): string {
 <body class="bg-surface text-on-surface">
 <!-- SideNavBar -->
 <?php include "sidebar.php"; ?>
+<!-- Main Content Canvas -->
+<main class="lg:pl-64 min-h-screen">
 <!-- TopNavBar -->
-<header class="fixed top-0 right-0 w-[calc(100%-16rem)] h-16 bg-surface dark:bg-on-background border-b border-outline-variant dark:border-outline flex justify-between items-center px-xl w-full z-20">
-<div>
-<p class="font-label-md text-label-md text-on-surface">Reports &amp; Analytics</p>
-<p class="font-label-sm text-label-sm text-secondary">Performance overview across your fleet</p>
+<header class="h-16 bg-surface dark:bg-surface-container border-b border-outline-variant dark:border-outline flex items-center justify-between px-4 sm:px-margin-desktop sticky top-0 z-30 shadow-sm gap-2">
+<div class="pl-12 lg:pl-0 min-w-0">
+<p class="font-label-md text-label-md text-on-surface truncate">Reports &amp; Analytics</p>
+<p class="font-label-sm text-label-sm text-secondary hidden sm:block">Performance overview across your fleet</p>
 </div>
-<div class="flex items-center gap-lg">
+<div class="flex items-center gap-2 sm:gap-lg shrink-0">
 <a href="reports.php?export=csv" class="flex items-center gap-xs bg-primary text-on-primary font-label-md text-label-md py-sm px-lg rounded-lg shadow-sm hover:shadow-md transition-all active:scale-95">
 <span class="material-symbols-outlined text-[18px]">download</span>
-Export CSV
+<span class="hidden sm:inline">Export CSV</span>
 </a>
 <button class="text-secondary hover:text-primary transition-colors relative">
 <span class="material-symbols-outlined">notifications</span>
@@ -154,7 +156,7 @@ Export CSV
 <button class="text-secondary hover:text-primary transition-colors">
 <span class="material-symbols-outlined">help_outline</span>
 </button>
-<div class="h-8 w-px bg-outline-variant"></div>
+<div class="h-8 w-px bg-outline-variant hidden sm:block"></div>
 <div class="flex items-center gap-md">
 <div class="text-right hidden sm:block">
 <p class="font-label-md text-label-md text-on-surface"><?php echo htmlspecialchars($_SESSION['user_name'] ?? 'Admin'); ?></p>
@@ -166,9 +168,7 @@ Export CSV
 </div>
 </div>
 </header>
-<!-- Main Content Canvas -->
-<main class="ml-64 pt-16 min-h-screen">
-<div class="p-xl max-w-max-width mx-auto">
+<div class="p-4 sm:p-6 lg:p-margin-desktop max-w-max-width mx-auto pb-24 lg:pb-margin-desktop">
 
 <div class="flex flex-col md:flex-row md:items-end justify-between gap-lg mb-xl">
 <div>

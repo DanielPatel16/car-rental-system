@@ -194,27 +194,6 @@ include "../includes/header.php";
             </div>
         </section>
 
-        <section class="py-2xl bg-primary text-on-primary overflow-hidden relative">
-            <div class="absolute inset-0 opacity-10">
-                <svg height="100%" viewBox="0 0 100 100" width="100%" preserveAspectRatio="none">
-                    <defs>
-                        <pattern id="grid" width="10" height="10" patternUnits="userSpaceOnUse">
-                            <path d="M 10 0 L 0 0 0 10" fill="none" stroke="currentColor" stroke-width="0.5"></path>
-                        </pattern>
-                    </defs>
-                    <rect width="100" height="100" fill="url(#grid)"></rect>
-                </svg>
-            </div>
-
-            <div class="px-margin-desktop max-w-max-width mx-auto text-center relative z-10">
-                <h2 class="text-headline-lg mb-lg">Ready for a Premium Journey?</h2>
-                <p class="text-body-lg mb-xl max-w-2xl mx-auto opacity-90">Join thousands of happy drivers who trust DriveEase for their daily commutes and long adventures.</p>
-                <div class="flex flex-col sm:flex-row gap-md justify-center">
-                    <button class="bg-white text-primary px-2xl py-lg rounded-lg font-headline-sm hover:bg-surface-container transition-all">Start Your Search</button>
-                    <button class="bg-transparent border-2 border-white text-on-primary px-2xl py-lg rounded-lg font-headline-sm hover:bg-white/10 transition-all">Download App</button>
-                </div>
-            </div>
-        </section>
     </main>
 
     <?php include "../includes/footer.php"; ?>

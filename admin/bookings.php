@@ -17,10 +17,35 @@ if (isset($_GET['action'], $_GET['id'])) {
 
     if (isset($map[$_GET['action']])) {
         $newStatus = $map[$_GET['action']];
+
+        // Look up the car linked to this booking so we can keep its rental status in sync
+        $carLookup = $conn->prepare("SELECT car_id FROM bookings WHERE id = ?");
+        $carLookup->bind_param("i", $id);
+        $carLookup->execute();
+        $carRow = $carLookup->get_result()->fetch_assoc();
+        $carLookup->close();
+
         $stmt = $conn->prepare("UPDATE bookings SET booking_status = ? WHERE id = ?");
         $stmt->bind_param("si", $newStatus, $id);
         $stmt->execute();
         $stmt->close();
+
+        if ($carRow) {
+            $carId = (int) $carRow['car_id'];
+            if ($newStatus === 'Confirmed') {
+                // Booking accepted -> car goes out on rent
+                $carStmt = $conn->prepare("UPDATE cars SET status = 'Rented' WHERE id = ?");
+                $carStmt->bind_param("i", $carId);
+                $carStmt->execute();
+                $carStmt->close();
+            } elseif ($newStatus === 'Completed' || $newStatus === 'Cancelled') {
+                // Trip finished or cancelled -> car is free again (unless it's in maintenance)
+                $carStmt = $conn->prepare("UPDATE cars SET status = 'Available' WHERE id = ? AND status != 'Maintenance'");
+                $carStmt->bind_param("i", $carId);
+                $carStmt->execute();
+                $carStmt->close();
+            }
+        }
 
         if ($newStatus === 'Cancelled') {
             $conn->query("UPDATE bookings SET payment_status = 'Refunded' WHERE id = $id AND payment_status = 'Paid'");
@@ -101,6 +126,13 @@ $statusBadge = [
     'Cancelled' => 'bg-surface-container-high text-secondary border border-outline-variant opacity-70 line-through',
 ];
 
+// Helper: initials from a name, e.g. "James Smith" -> "JS" (same as dashboard.php / reports.php)
+function initials_from_name(string $name): string {
+    $parts   = preg_split('/\s+/', trim($name));
+    $letters = array_map(fn($p) => mb_strtoupper(mb_substr($p, 0, 1)), array_slice($parts, 0, 2));
+    return implode('', $letters) ?: '?';
+}
+
 function bqs($extra) {
     $qs = $_GET;
     unset($qs['action'], $qs['id']);
@@ -151,7 +183,9 @@ function bqs($extra) {
 <p class="font-label-md text-label-md text-on-surface"><?php echo htmlspecialchars($_SESSION['user_name'] ?? 'Admin'); ?></p>
 <p class="font-label-sm text-label-sm text-secondary">Admin Access</p>
 </div>
-<img class="w-10 h-10 rounded-full border border-primary object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBeoe_DdMdzOnWC20h3U8FPDUKfQHCIQP_dyioEThtyuVHd1sOv6tPaUf6yuodwJy_hQE43PEE_C2u4whjt65-F3aNf8wmYVLeBbDbdoRumRJsBW0eMxt-w1melyuiDQJdag_o_8UjgbCvKwpMGIo_f2yzf1CaEOAWeMt8Pv2vkKCTk3EP6dbFGQXlaCFE95RqzSIk0AWScNL8gdkLaOOw-SHabO6AQ5k1FE4A_5OR53CQOjAP-jiOgMCPTggQFYlr9SZOCcdhsj0s">
+<div class="w-10 h-10 rounded-full border border-primary bg-secondary-container flex items-center justify-center text-primary font-bold text-sm">
+<?php echo htmlspecialchars(initials_from_name($_SESSION['user_name'] ?? 'Admin')); ?>
+</div>
 </div>
 </div>
 </div>

@@ -18,10 +18,35 @@ if (isset($_GET['action'], $_GET['id'])) {
 
     if (isset($map[$_GET['action']])) {
         $newStatus = $map[$_GET['action']];
+
+        // Look up the car linked to this booking so we can keep its rental status in sync
+        $carLookup = $conn->prepare("SELECT car_id FROM bookings WHERE id = ?");
+        $carLookup->bind_param("i", $id);
+        $carLookup->execute();
+        $carRow = $carLookup->get_result()->fetch_assoc();
+        $carLookup->close();
+
         $stmt = $conn->prepare("UPDATE bookings SET booking_status = ? WHERE id = ?");
         $stmt->bind_param("si", $newStatus, $id);
         $stmt->execute();
         $stmt->close();
+
+        if ($carRow) {
+            $carId = (int) $carRow['car_id'];
+            if ($newStatus === 'Confirmed') {
+                // Booking accepted -> car goes out on rent
+                $carStmt = $conn->prepare("UPDATE cars SET status = 'Rented' WHERE id = ?");
+                $carStmt->bind_param("i", $carId);
+                $carStmt->execute();
+                $carStmt->close();
+            } elseif ($newStatus === 'Completed' || $newStatus === 'Cancelled') {
+                // Trip finished or cancelled -> car is free again (unless it's in maintenance)
+                $carStmt = $conn->prepare("UPDATE cars SET status = 'Available' WHERE id = ? AND status != 'Maintenance'");
+                $carStmt->bind_param("i", $carId);
+                $carStmt->execute();
+                $carStmt->close();
+            }
+        }
 
         if ($newStatus === 'Cancelled') {
             $conn->query("UPDATE bookings SET payment_status = 'Refunded' WHERE id = $id AND payment_status = 'Paid'");

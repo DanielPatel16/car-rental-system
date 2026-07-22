@@ -210,6 +210,13 @@ while ($row = $statResult->fetch_assoc()) {
     $statCounts[$row['status']] = (int) $row['c'];
 }
 $totalFleet = array_sum($statCounts);
+
+// Helper: initials from a name, e.g. "James Smith" -> "JS" (same as dashboard.php / reports.php)
+function initials_from_name(string $name): string {
+    $parts   = preg_split('/\s+/', trim($name));
+    $letters = array_map(fn($p) => mb_strtoupper(mb_substr($p, 0, 1)), array_slice($parts, 0, 2));
+    return implode('', $letters) ?: '?';
+}
 ?>
 <!DOCTYPE html><html class="light" lang="en"><head>
 <meta charset="utf-8">
@@ -268,7 +275,9 @@ $totalFleet = array_sum($statCounts);
 <p class="font-label-md text-label-md text-on-surface"><?php echo htmlspecialchars($_SESSION['user_name'] ?? 'Admin'); ?></p>
 <p class="font-label-sm text-label-sm text-secondary">Fleet Supervisor</p>
 </div>
-<img class="w-10 h-10 rounded-full border border-outline-variant object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDfr-N5WQrwD7BXENoPngmdABwO4G73_E1-AMFCbKBF5kmT7ETZ32TJ5-rN6Z4mB3pktLcpvgRRYZHW-GMrvRBwUAYKDRkm0zedx1Odj3tVLOD3uNyaSgCzIGMElCc7ABW5TYPUSqjNFG-Gcz3A6y-0YmCTykS3pfZ_mg4shcEoE3ZKormDzLeWFWFB6HPy4yLx5KizGrRaoeFAC9INXjgYmy8QByJf_FJDhcT7MMEKb4pv1cNafaqIyGeMhSSTaseKa-rsGEmy6TA">
+<div class="w-10 h-10 rounded-full border border-outline-variant bg-secondary-container flex items-center justify-center text-primary font-bold text-sm">
+<?php echo htmlspecialchars(initials_from_name($_SESSION['user_name'] ?? 'Admin')); ?>
+</div>
 </div>
 </div>
 </header>
